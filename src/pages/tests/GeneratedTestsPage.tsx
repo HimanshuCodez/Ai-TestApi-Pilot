@@ -24,9 +24,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { useProjectsStore } from "@/store/useProjectsStore";
-import { useWorkflowStore } from "@/store/useWorkflowStore";
-import { endpoints, testCases } from "@/services/mockData";
-import type { TestCase, TestKind } from "@/types";
+import { useWorkflowStore, toWorkflowTestCase } from "@/store/useWorkflowStore";
+import { useJobProgress } from "@/hooks/useJobProgress";
+import { generateTests, listTests } from "@/services/api/projects";
+import { ApiError } from "@/lib/api";
+import type { Severity, TestCase, TestKind } from "@/types";
 import { cn } from "@/lib/utils";
 
 const PHASES = [
@@ -59,11 +61,12 @@ const CATEGORY_BADGE: Record<TestKind, "success" | "critical" | "warning" | "inf
   security: "critical",
 };
 
+const SEVERITY_WEIGHT: Record<Severity, number> = { critical: 4, high: 3, medium: 2, low: 1 };
+const KIND_WEIGHT: Record<TestKind, number> = { positive: 1, boundary: 2, negative: 2, security: 3 };
+
 function deriveMeta(test: TestCase) {
-  const ep = endpoints.find((e) => e.id === test.endpointId);
-  const issueCount = ep?.issueCount ?? 0;
-  const kindWeight: Record<TestKind, number> = { positive: 1, boundary: 2, negative: 2, security: 3 };
-  const risk = Math.min(97, 15 + kindWeight[test.kind] * 20 + issueCount * 15);
+  const sevWeight = test.severity ? SEVERITY_WEIGHT[test.severity] : 2;
+  const risk = Math.min(97, 10 + KIND_WEIGHT[test.kind] * 15 + sevWeight * 12);
   const priority = risk >= 75 ? "Critical" : risk >= 55 ? "High" : risk >= 35 ? "Medium" : "Low";
   const difficulty = test.kind === "security" ? "Hard" : test.kind === "boundary" || test.kind === "negative" ? "Medium" : "Easy";
   return { risk, priority, difficulty };
@@ -84,48 +87,72 @@ export default function GeneratedTestsPage() {
   const workflow = useWorkflowStore((s) => s.getWorkflow(projectId));
   const setTests = useWorkflowStore((s) => s.setTests);
 
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [phaseIndex, setPhaseIndex] = useState(0);
+  const [jobId, setJobId] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<"all" | TestKind>("all");
 
   useEffect(() => {
-    setIsGenerating(false);
-    setPhaseIndex(0);
+    setJobId(null);
     setActiveFilter("all");
   }, [projectId]);
 
-  useEffect(() => {
-    if (!isGenerating) return;
-    if (phaseIndex >= PHASES.length - 1) {
-      const t = setTimeout(() => {
-        setTests(projectId, testCases);
-        updateProject(projectId, { testsGenerated: testCases.length });
-        setIsGenerating(false);
-        setPhaseIndex(0);
-        toast.success(`AI generated ${testCases.length} test cases`);
-      }, 700);
-      return () => clearTimeout(t);
+  const jobProgress = useJobProgress(jobId, async (finalState) => {
+    if (finalState.status === "completed") {
+      try {
+        const apiTests = await listTests(projectId);
+        const mapped = apiTests.map((t) => toWorkflowTestCase(t));
+        setTests(projectId, mapped);
+        updateProject(projectId, { testsGenerated: mapped.length });
+        toast.success(`AI generated ${mapped.length} test cases`);
+      } catch {
+        toast.error("Generated tests, but couldn't load them. Try refreshing.");
+      }
+      setJobId(null);
+    } else if (finalState.status === "failed") {
+      toast.error("Test generation failed", { description: finalState.error ?? "Please try again." });
+      setJobId(null);
     }
-    const t = setTimeout(() => setPhaseIndex((i) => i + 1), 650);
-    return () => clearTimeout(t);
-  }, [isGenerating, phaseIndex, projectId, setTests, updateProject]);
+  });
+
+  async function startGenerating() {
+    try {
+      const { jobId: newJobId } = await generateTests(projectId);
+      setJobId(newJobId);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Couldn't start test generation. Please try again.";
+      toast.error("Test generation failed to start", { description: message });
+    }
+  }
+
+  async function refreshTests() {
+    try {
+      const apiTests = await listTests(projectId);
+      const mapped = apiTests.map((t) => toWorkflowTestCase(t));
+      setTests(projectId, mapped);
+      updateProject(projectId, { testsGenerated: mapped.length });
+    } catch {
+      // best-effort refresh — leave existing local state alone on failure
+    }
+  }
 
   if (!project) return <Navigate to="/app/projects" replace />;
 
-  if (!workflow.analyzed) {
+  if (!workflow.uploaded) {
     return (
       <div className="space-y-8">
         <PageHeader eyebrow={project.name} title="Generate AI Tests" description="Turn your API map into a real test suite." />
         <EmptyState
           icon={Sparkles}
-          title="Run AI Analysis first"
-          description="TestPilot AI needs to understand your endpoints before it can write tests for them."
-          actionLabel="Go to AI Analysis"
-          onAction={() => navigate(`/app/projects/${projectId}/analysis`)}
+          title="Connect your API first"
+          description="TestPilot AI needs to map your endpoints before it can write tests for them."
+          actionLabel="Go to Upload"
+          onAction={() => navigate(`/app/projects/${projectId}/upload`)}
         />
       </div>
     );
   }
+
+  const isGenerating = jobId !== null;
+  const phaseIndex = Math.min(PHASES.length - 1, Math.floor((jobProgress.progress / 100) * PHASES.length));
 
   const tests = workflow.tests;
   const filtered = activeFilter === "all" ? tests : tests.filter((t) => t.kind === activeFilter);
@@ -140,7 +167,7 @@ export default function GeneratedTestsPage() {
         description="AI-authored positive, security, boundary and edge-case tests for every endpoint."
         actions={
           workflow.testsGenerated && !isGenerating ? (
-            <Button variant="outline" onClick={() => setIsGenerating(true)}>
+            <Button variant="outline" onClick={startGenerating}>
               <RefreshCw className="size-4" /> Regenerate All
             </Button>
           ) : undefined
@@ -167,10 +194,9 @@ export default function GeneratedTestsPage() {
               </motion.div>
               <h3 className="relative text-lg font-semibold text-foreground">Ready to generate your test suite</h3>
               <p className="relative mt-1.5 max-w-md text-sm text-muted-foreground">
-                TestPilot AI will write positive, security, boundary and edge-case tests across all {endpoints.length}{" "}
-                mapped endpoints.
+                TestPilot AI will write positive, security, boundary and edge-case tests across every mapped endpoint.
               </p>
-              <Button size="lg" className="relative mt-6" onClick={() => setIsGenerating(true)}>
+              <Button size="lg" className="relative mt-6" onClick={startGenerating}>
                 <Sparkles className="size-4" /> Generate AI Tests
               </Button>
             </Card>
@@ -180,7 +206,7 @@ export default function GeneratedTestsPage() {
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
               <SummaryStat label="Total Tests" value={tests.length} />
               <SummaryStat label="Security Tests" value={securityCount} accent="text-critical" />
-              <SummaryStat label="Endpoints Covered" value={endpoints.length} />
+              <SummaryStat label="Endpoints Covered" value={project.endpointCount} />
               <SummaryStat label="Avg. Estimated Risk" value={`${avgRisk}%`} accent="text-warning" />
             </div>
 
@@ -207,7 +233,7 @@ export default function GeneratedTestsPage() {
 
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               {filtered.map((test, i) => (
-                <TestCard key={test.id} test={test} projectId={projectId} index={i} />
+                <TestCard key={test.id} test={test} projectId={projectId} index={i} onRegenerated={refreshTests} />
               ))}
             </div>
 
@@ -279,15 +305,34 @@ function SummaryStat({ label, value, accent }: { label: string; value: number | 
   );
 }
 
-function TestCard({ test, projectId, index }: { test: TestCase; projectId: string; index: number }) {
+function TestCard({
+  test,
+  projectId,
+  index,
+  onRegenerated,
+}: {
+  test: TestCase;
+  projectId: string;
+  index: number;
+  onRegenerated: () => void;
+}) {
   const updateTest = useWorkflowStore((s) => s.updateTest);
   const [expanded, setExpanded] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(test.description);
-  const [isRegenerating, setIsRegenerating] = useState(false);
-
-  const ep = endpoints.find((e) => e.id === test.endpointId);
+  const [regenJobId, setRegenJobId] = useState<string | null>(null);
   const meta = deriveMeta(test);
+
+  const regenProgress = useJobProgress(regenJobId, (finalState) => {
+    if (finalState.status === "completed") {
+      onRegenerated();
+      toast.success("Test regenerated");
+    } else if (finalState.status === "failed") {
+      toast.error("Couldn't regenerate this test", { description: finalState.error ?? "Please try again." });
+    }
+    setRegenJobId(null);
+  });
+  const isRegenerating = regenJobId !== null && regenProgress.status !== "completed" && regenProgress.status !== "failed";
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(`${test.request}\n\nExpected:\n${test.expected}`);
@@ -300,20 +345,14 @@ function TestCard({ test, projectId, index }: { test: TestCase; projectId: strin
     toast.success("Test updated");
   };
 
-  const handleRegenerate = () => {
-    setIsRegenerating(true);
-    setTimeout(() => {
-      const variants = [
-        `Re-analyzed by AI for tighter coverage of ${ep?.path ?? test.path}, including newly observed response variants.`,
-        `Refined by AI to sharpen assertions on ${ep?.path ?? test.path} based on the latest endpoint schema.`,
-        `Regenerated with an additional edge condition surfaced during the last AI analysis pass.`,
-      ];
-      const next = variants[Math.floor(Math.random() * variants.length)];
-      updateTest(projectId, test.id, { description: next, durationMs: Math.floor(80 + Math.random() * 420) });
-      setDraft(next);
-      setIsRegenerating(false);
-      toast.success("Test regenerated");
-    }, 750);
+  const handleRegenerate = async () => {
+    try {
+      const { jobId } = await generateTests(projectId, [test.endpointId]);
+      setRegenJobId(jobId);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Couldn't regenerate this test. Please try again.";
+      toast.error("Regeneration failed", { description: message });
+    }
   };
 
   return (

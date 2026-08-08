@@ -6,32 +6,36 @@ import {
   Check,
   FileCode2,
   FileJson,
+  GitBranch,
   Link2,
   Loader2,
   RefreshCw,
   Sparkles,
   UploadCloud,
 } from "lucide-react";
+import { toast } from "sonner";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { useProjectsStore } from "@/store/useProjectsStore";
 import { useWorkflowStore } from "@/store/useWorkflowStore";
-import { endpoints } from "@/services/mockData";
+import { useJobProgress } from "@/hooks/useJobProgress";
+import { connectFile, connectUrl } from "@/services/api/projects";
+import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const acceptedFormats = [
   { label: "Swagger JSON", icon: FileJson },
   { label: "OpenAPI YAML", icon: FileCode2 },
-  { label: "Postman Collection", icon: FileJson },
 ];
 
 const stages = [
-  { label: "Reading file", detail: "Loading and validating the raw spec" },
+  { label: "Reading spec", detail: "Loading and validating the raw document" },
   { label: "Parsing endpoints", detail: "Extracting paths, methods and schemas" },
+  { label: "Mapping the API graph", detail: "Building relationships between resources" },
   { label: "Understanding authentication", detail: "Detecting Bearer, OAuth and API key schemes" },
-  { label: "Building API graph", detail: "Mapping relationships between resources" },
   { label: "Done", detail: "Your API is ready to explore" },
 ];
 
@@ -43,64 +47,110 @@ const PARTICLES = Array.from({ length: 10 }, (_, i) => ({
 }));
 
 type Status = "idle" | "processing" | "done";
+type ConnectTab = "spec" | "github";
+
+interface DiscoverySummary {
+  endpointCount: number;
+  authSchemeCount: number;
+}
 
 export default function UploadApiPage() {
   const { projectId = "" } = useParams();
   const navigate = useNavigate();
   const project = useProjectsStore((s) => s.projects.find((p) => p.id === projectId));
+  const updateProject = useProjectsStore((s) => s.updateProject);
   const workflow = useWorkflowStore((s) => s.getWorkflow(projectId));
   const setUploaded = useWorkflowStore((s) => s.setUploaded);
 
+  const [tab, setTab] = useState<ConnectTab>("spec");
   const [status, setStatus] = useState<Status>("idle");
-  const [stageIndex, setStageIndex] = useState(-1);
+  const [jobId, setJobId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [fileName, setFileName] = useState("");
   const [fileMeta, setFileMeta] = useState("");
   const [urlMode, setUrlMode] = useState(false);
   const [urlValue, setUrlValue] = useState("");
   const [showReplace, setShowReplace] = useState(!workflow.uploaded);
+  const [summary, setSummary] = useState<DiscoverySummary | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (status !== "processing") return;
-    if (stageIndex >= stages.length - 1) {
-      const t = setTimeout(() => {
-        setStatus("done");
-        setUploaded(projectId, fileName, fileMeta);
-      }, 750);
-      return () => clearTimeout(t);
+  const jobProgress = useJobProgress(jobId, (finalState) => {
+    if (finalState.status === "completed") {
+      let result: DiscoverySummary & { baseUrl?: string | null } = { endpointCount: 0, authSchemeCount: 0 };
+      try {
+        result = finalState.resultRef ? JSON.parse(finalState.resultRef) : result;
+      } catch {
+        // resultRef wasn't parseable JSON — fall back to zeroed summary
+      }
+      setSummary({ endpointCount: result.endpointCount, authSchemeCount: result.authSchemeCount });
+      setUploaded(projectId, fileName, fileMeta);
+      updateProject(projectId, {
+        endpointCount: result.endpointCount,
+        baseUrl: result.baseUrl ?? project?.baseUrl,
+        status: "healthy",
+      });
+      setStatus("done");
+    } else if (finalState.status === "failed") {
+      toast.error("Couldn't connect your API", { description: finalState.error ?? "Please try again." });
+      setStatus("idle");
+      setJobId(null);
     }
-    const t = setTimeout(() => setStageIndex((i) => i + 1), stageIndex === -1 ? 350 : 850);
-    return () => clearTimeout(t);
-  }, [status, stageIndex, projectId, fileName, fileMeta, setUploaded]);
+  });
+
+  useEffect(() => {
+    setStatus("idle");
+    setJobId(null);
+    setSummary(null);
+    setShowReplace(!workflow.uploaded);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   if (!project) return <Navigate to="/app/projects" replace />;
 
-  function beginProcessing(name: string, meta: string) {
-    setFileName(name);
-    setFileMeta(meta);
-    setStageIndex(-1);
-    setStatus("processing");
-  }
-
-  function handleFiles(files: FileList | null) {
+  async function handleFiles(files: FileList | null) {
     const file = files?.[0];
     if (!file) return;
     const kb = (file.size / 1024).toFixed(0);
-    beginProcessing(file.name, `${kb} KB · detected ${file.name.endsWith(".yaml") || file.name.endsWith(".yml") ? "OpenAPI YAML" : "OpenAPI JSON"}`);
+    const kind = file.name.endsWith(".yaml") || file.name.endsWith(".yml") ? "OpenAPI YAML" : "OpenAPI JSON";
+    setFileName(file.name);
+    setFileMeta(`${kb} KB · detected ${kind}`);
+    setStatus("processing");
+
+    try {
+      const content = await file.text();
+      const { jobId: newJobId } = await connectFile(projectId, file.name, content);
+      setJobId(newJobId);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Couldn't read that file. Please try again.";
+      toast.error("Upload failed", { description: message });
+      setStatus("idle");
+    }
   }
 
-  function handleUrlSubmit(e: React.FormEvent) {
+  async function handleUrlSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!urlValue.trim()) return;
     let host = "spec";
     try {
       host = new URL(urlValue).hostname;
     } catch {
-      /* ignore invalid URL, still simulate */
+      /* ignore — backend will validate and return a friendly error */
     }
-    beginProcessing(urlValue.trim(), `Fetched from ${host}`);
+    setFileName(urlValue.trim());
+    setFileMeta(`Fetched from ${host}`);
+    setStatus("processing");
+
+    try {
+      const { jobId: newJobId } = await connectUrl(projectId, urlValue.trim());
+      setJobId(newJobId);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Couldn't reach that URL. Please try again.";
+      toast.error("Connection failed", { description: message });
+      setStatus("idle");
+    }
   }
+
+  const stageIndex = Math.min(stages.length - 1, Math.floor((jobProgress.progress / 100) * stages.length));
 
   const showDropzone = status === "idle" && showReplace;
   const showSummary = status === "done" || (status === "idle" && !showReplace);
@@ -109,12 +159,53 @@ export default function UploadApiPage() {
     <div className="space-y-8">
       <PageHeader
         eyebrow={project.name}
-        title="Upload your API spec"
-        description="Drop in a Swagger, OpenAPI or Postman file — TestPilot AI reads it in seconds."
+        title="Connect your API"
+        description="Point TestPilot AI at a Swagger/OpenAPI spec — it reads it in seconds."
       />
 
+      {showDropzone && (
+        <div className="flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.02] p-1 w-fit">
+          <button
+            onClick={() => setTab("spec")}
+            className={cn(
+              "rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
+              tab === "spec" ? "bg-primary/15 text-foreground" : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            API URL / File
+          </button>
+          <button
+            onClick={() => setTab("github")}
+            className={cn(
+              "flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
+              tab === "github" ? "bg-primary/15 text-foreground" : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <GitBranch className="size-3.5" /> GitHub Repository
+          </button>
+        </div>
+      )}
+
       <AnimatePresence mode="wait">
-        {showDropzone && (
+        {showDropzone && tab === "github" && (
+          <motion.div key="github" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <Card className="mx-auto max-w-xl items-center gap-4 px-8 py-16 text-center">
+              <div className="flex size-16 items-center justify-center rounded-2xl bg-white/[0.04] text-muted-foreground">
+                <GitBranch className="size-7" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-foreground">GitHub connect is coming soon</h3>
+                <p className="mt-1.5 max-w-sm text-sm text-muted-foreground">
+                  TestPilot AI will soon be able to scan a repository's routes directly — no spec file required. For
+                  now, use a Swagger/OpenAPI URL or file.
+                </p>
+              </div>
+              <Badge variant="outline">Coming soon</Badge>
+            </Card>
+          </motion.div>
+        )}
+
+        {showDropzone && tab === "spec" && (
           <motion.div key="dropzone" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-5">
             <div
               onDragOver={(e) => {
@@ -125,7 +216,7 @@ export default function UploadApiPage() {
               onDrop={(e) => {
                 e.preventDefault();
                 setIsDragging(false);
-                handleFiles(e.dataTransfer.files);
+                void handleFiles(e.dataTransfer.files);
               }}
               onClick={() => inputRef.current?.click()}
               className={cn(
@@ -140,7 +231,7 @@ export default function UploadApiPage() {
                 type="file"
                 accept=".json,.yaml,.yml"
                 className="hidden"
-                onChange={(e) => handleFiles(e.target.files)}
+                onChange={(e) => void handleFiles(e.target.files)}
               />
 
               <div className="pointer-events-none absolute inset-0 -z-10">
@@ -288,18 +379,18 @@ export default function UploadApiPage() {
                 <Check className="relative size-8 text-success" />
               </motion.div>
               <div>
-                <h3 className="text-lg font-semibold text-foreground">Spec uploaded successfully</h3>
+                <h3 className="text-lg font-semibold text-foreground">API connected successfully</h3>
                 <p className="mt-1.5 truncate text-sm text-muted-foreground">{workflow.fileName || fileName}</p>
                 <p className="text-xs text-muted-foreground">{workflow.fileMeta || fileMeta}</p>
               </div>
               <div className="mx-auto flex max-w-xs items-center justify-center gap-6 rounded-xl border border-white/[0.06] bg-white/[0.02] py-3">
                 <div>
-                  <p className="text-xl font-bold text-foreground">{endpoints.length}</p>
+                  <p className="text-xl font-bold text-foreground">{summary?.endpointCount ?? project.endpointCount}</p>
                   <p className="text-xs text-muted-foreground">Endpoints found</p>
                 </div>
                 <div className="h-8 w-px bg-white/[0.08]" />
                 <div>
-                  <p className="text-xl font-bold text-foreground">2</p>
+                  <p className="text-xl font-bold text-foreground">{summary?.authSchemeCount ?? 0}</p>
                   <p className="text-xs text-muted-foreground">Auth schemes</p>
                 </div>
               </div>

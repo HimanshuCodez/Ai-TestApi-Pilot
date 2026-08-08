@@ -1,23 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { AnimatePresence, motion } from "framer-motion";
 import { formatDistanceToNowStrict } from "date-fns";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Legend,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip as RTooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { Bar, BarChart, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import {
   ArrowRight,
   Bug,
@@ -41,13 +27,13 @@ import { AnimatedCounter } from "@/components/shared/AnimatedCounter";
 import { SeverityBadge } from "@/components/shared/SeverityBadge";
 import { ChartCard } from "@/components/shared/ChartCard";
 import { ChartTooltip } from "@/components/shared/ChartTooltip";
-import { CodeBlock } from "@/components/shared/CodeBlock";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useProjectsStore } from "@/store/useProjectsStore";
 import { useWorkflowStore } from "@/store/useWorkflowStore";
-import { chartData, securityIssues } from "@/services/mockData";
-import type { Severity, SecurityIssue } from "@/types";
+import { getReport } from "@/services/api/projects";
+import type { ApiFinding, ApiReport } from "@/services/api/types";
+import type { Severity } from "@/types";
 import { cn } from "@/lib/utils";
 
 const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low"];
@@ -58,7 +44,7 @@ const SEVERITY_COLOR: Record<Severity, string> = {
   low: "#4F9CFF",
 };
 
-const STATUS_STYLE: Record<SecurityIssue["status"], string> = {
+const STATUS_STYLE: Record<ApiFinding["status"], string> = {
   open: "text-critical bg-critical/10 border-critical/25",
   acknowledged: "text-warning bg-warning/10 border-warning/25",
   resolved: "text-success bg-success/10 border-success/25",
@@ -69,20 +55,41 @@ export default function ReportsPage() {
   const navigate = useNavigate();
   const project = useProjectsStore((s) => s.projects.find((p) => p.id === projectId));
   const workflow = useWorkflowStore((s) => s.getWorkflow(projectId));
-  const [selectedIssue, setSelectedIssue] = useState<SecurityIssue | null>(null);
+  const [selectedIssue, setSelectedIssue] = useState<ApiFinding | null>(null);
+  const [report, setReport] = useState<ApiReport | null>(null);
+  const [findings, setFindings] = useState<ApiFinding[]>([]);
+  const [loaded, setLoaded] = useState(false);
 
-  const severityCounts = useMemo(() => {
-    return SEVERITY_ORDER.map((sev) => ({
-      name: sev.charAt(0).toUpperCase() + sev.slice(1),
-      severity: sev,
-      value: securityIssues.filter((i) => i.severity === sev).length,
-    }));
-  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    setLoaded(false);
+    getReport(projectId)
+      .then((data) => {
+        if (cancelled) return;
+        setReport(data.report);
+        setFindings(data.findings);
+        setLoaded(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setReport(null);
+        setFindings([]);
+        setLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
-  const avgP50 = Math.round(chartData.responseTime.reduce((a, d) => a + d.p50, 0) / chartData.responseTime.length);
-  const avgP95 = Math.round(chartData.responseTime.reduce((a, d) => a + d.p95, 0) / chartData.responseTime.length);
-  const performanceScore = Math.max(0, Math.min(100, Math.round(100 - avgP95 / 6)));
-  const coveragePct = chartData.coverage[0].value;
+  const severityCounts = useMemo(
+    () =>
+      SEVERITY_ORDER.map((sev) => ({
+        name: sev.charAt(0).toUpperCase() + sev.slice(1),
+        severity: sev,
+        value: findings.filter((f) => f.severity === sev).length,
+      })),
+    [findings]
+  );
 
   if (!project) return <Navigate to="/app/projects" replace />;
 
@@ -101,11 +108,35 @@ export default function ReportsPage() {
     );
   }
 
+  if (!loaded) {
+    return (
+      <div className="space-y-8">
+        <PageHeader eyebrow={project.name} title="AI Report" description="Health, security and coverage in one view." />
+        <Card className="items-center gap-2 py-16 text-center text-sm text-muted-foreground">Loading report...</Card>
+      </div>
+    );
+  }
+
+  if (!report) {
+    return (
+      <div className="space-y-8">
+        <PageHeader eyebrow={project.name} title="AI Report" description="Health, security and coverage in one view." />
+        <EmptyState
+          icon={Sparkles}
+          title="No report yet"
+          description="Run your test suite to generate a report for this project."
+          actionLabel="Go to Run Tests"
+          onAction={() => navigate(`/app/projects/${projectId}/run`)}
+        />
+      </div>
+    );
+  }
+
   const run = workflow.runResult;
   const testResultsData = [
-    { name: "Passed", value: run?.passed ?? 0 },
-    { name: "Failed", value: run?.failed ?? 0 },
-    { name: "Skipped", value: run?.skipped ?? 0 },
+    { name: "Passed", value: report.metrics.passed },
+    { name: "Failed", value: report.metrics.failed },
+    { name: "Skipped", value: report.metrics.skipped },
   ].filter((d) => d.value > 0);
   const TEST_RESULT_COLORS: Record<string, string> = { Passed: "#2EE6A6", Failed: "#FF5470", Skipped: "#8b8b9e" };
 
@@ -119,19 +150,37 @@ export default function ReportsPage() {
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         <Card className="flex flex-col items-center justify-center gap-1 py-8 lg:col-span-1">
-          <CircularScore value={project.healthScore} size={176} strokeWidth={13} label="API Health Score" />
+          <CircularScore value={report.healthScore} size={176} strokeWidth={13} label="API Health Score" />
         </Card>
 
         <div className="grid grid-cols-2 gap-4 lg:col-span-2">
-          <ReportStat icon={ShieldCheck} label="Security Score" value={project.securityScore} suffix="%" accent="text-primary" />
-          <ReportStat icon={Target} label="Test Coverage" value={coveragePct} suffix="%" accent="text-success" />
-          <ReportStat icon={Gauge} label="Performance Score" value={performanceScore} suffix="%" accent="text-accent" />
-          <ReportStat icon={Timer} label="Avg. Response Time" value={avgP50} suffix="ms" accent="text-warning" />
+          <ReportStat icon={ShieldCheck} label="Security Score" value={report.securityScore} suffix="%" accent="text-primary" />
+          <ReportStat icon={Target} label="Test Coverage" value={report.coverageScore} suffix="%" accent="text-success" />
+          <ReportStat icon={Gauge} label="Performance Score" value={report.performanceScore} suffix="%" accent="text-accent" />
+          <ReportStat icon={Timer} label="Avg. Response Time" value={report.metrics.avgDurationMs} suffix="ms" accent="text-warning" />
         </div>
       </div>
 
+      {report.aiInsights && (
+        <Card className="gap-3 border-primary/20 bg-primary/[0.04] p-6">
+          <h3 className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-primary uppercase">
+            <Sparkles className="size-3.5" /> AI Insights
+          </h3>
+          <p className="text-sm text-muted-foreground">{report.aiInsights.summary}</p>
+          {report.aiInsights.topRecommendations.length > 0 && (
+            <ul className="mt-1 space-y-1.5">
+              {report.aiInsights.topRecommendations.map((rec, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+                  <ArrowRight className="mt-0.5 size-3.5 shrink-0 text-primary" /> {rec}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-        <ChartCard title="Issues by Severity" description={`${securityIssues.length} findings from AI analysis`} delay={0.05} className="lg:col-span-2">
+        <ChartCard title="Issues by Severity" description={`${findings.length} findings from your last run`} delay={0.05} className="lg:col-span-2">
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={severityCounts} layout="vertical" margin={{ top: 4, right: 24, left: 0, bottom: 0 }}>
               <XAxis type="number" hide allowDecimals={false} />
@@ -161,71 +210,72 @@ export default function ReportsPage() {
         </ChartCard>
       </div>
 
-      <ChartCard title="Response Time" description="p50 / p95 latency across mapped endpoints (ms)" delay={0.1}>
-        <ResponsiveContainer width="100%" height={220}>
-          <LineChart data={chartData.responseTime} margin={{ top: 10, right: 16, left: -16, bottom: 0 }}>
-            <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.06)" />
-            <XAxis dataKey="day" tick={{ fill: "#8b8b9e", fontSize: 12 }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fill: "#8b8b9e", fontSize: 12 }} axisLine={false} tickLine={false} width={34} />
-            <RTooltip content={ChartTooltip} cursor={{ stroke: "rgba(255,255,255,0.12)" }} />
-            <Legend verticalAlign="top" height={28} iconType="circle" iconSize={8} formatter={(value) => <span className="text-xs text-muted-foreground">{value}</span>} />
-            <Line type="monotone" dataKey="p50" name="p50" stroke="#00E5FF" strokeWidth={2} dot={false} activeDot={{ r: 5 }} />
-            <Line type="monotone" dataKey="p95" name="p95" stroke="#6D5EF8" strokeWidth={2} dot={false} activeDot={{ r: 5 }} />
-          </LineChart>
-        </ResponsiveContainer>
+      <ChartCard title="Response Time" description="Latency across this run's requests (ms)" delay={0.1}>
+        <div className="grid grid-cols-3 gap-4 px-1">
+          <LatencyStat label="Average" value={report.metrics.avgDurationMs} />
+          <LatencyStat label="p50" value={report.metrics.p50DurationMs} />
+          <LatencyStat label="p95" value={report.metrics.p95DurationMs} />
+        </div>
       </ChartCard>
 
       <div className="space-y-5">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-foreground">Issues Found</h2>
-          <span className="text-xs text-muted-foreground">{securityIssues.length} total · click an issue for AI guidance</span>
+          <span className="text-xs text-muted-foreground">{findings.length} total · click an issue for AI guidance</span>
         </div>
 
-        {SEVERITY_ORDER.map((sev) => {
-          const issues = securityIssues.filter((i) => i.severity === sev);
-          if (issues.length === 0) return null;
-          return (
-            <div key={sev} className="space-y-2.5">
-              <div className="flex items-center gap-2">
-                <SeverityBadge severity={sev} />
-                <span className="text-xs text-muted-foreground">{issues.length} issue{issues.length > 1 ? "s" : ""}</span>
-              </div>
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                {issues.map((issue, i) => (
-                  <motion.button
-                    key={issue.id}
-                    initial={{ opacity: 0, y: 10 }}
-                    whileInView={{ opacity: 1, y: 0 }}
-                    viewport={{ once: true, margin: "-40px" }}
-                    transition={{ duration: 0.35, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] }}
-                    whileHover={{ y: -2 }}
-                    onClick={() => setSelectedIssue(issue)}
-                    className="group flex items-start gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4 text-left transition-colors hover:border-primary/30 hover:bg-white/[0.04]"
-                  >
-                    <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-xl bg-critical/10 text-critical">
-                      <Bug className="size-4" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-semibold text-foreground">{issue.title}</p>
-                        <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize", STATUS_STYLE[issue.status])}>{issue.status}</span>
+        {findings.length === 0 ? (
+          <Card className="items-center gap-2 py-12 text-center">
+            <ShieldCheck className="size-6 text-success" />
+            <p className="text-sm text-muted-foreground">No issues found — every test in this run passed.</p>
+          </Card>
+        ) : (
+          SEVERITY_ORDER.map((sev) => {
+            const issues = findings.filter((i) => i.severity === sev);
+            if (issues.length === 0) return null;
+            return (
+              <div key={sev} className="space-y-2.5">
+                <div className="flex items-center gap-2">
+                  <SeverityBadge severity={sev} />
+                  <span className="text-xs text-muted-foreground">{issues.length} issue{issues.length > 1 ? "s" : ""}</span>
+                </div>
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  {issues.map((issue, i) => (
+                    <motion.button
+                      key={issue.id}
+                      initial={{ opacity: 0, y: 10 }}
+                      whileInView={{ opacity: 1, y: 0 }}
+                      viewport={{ once: true, margin: "-40px" }}
+                      transition={{ duration: 0.35, delay: i * 0.05, ease: [0.16, 1, 0.3, 1] }}
+                      whileHover={{ y: -2 }}
+                      onClick={() => setSelectedIssue(issue)}
+                      className="group flex items-start gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4 text-left transition-colors hover:border-primary/30 hover:bg-white/[0.04]"
+                    >
+                      <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-xl bg-critical/10 text-critical">
+                        <Bug className="size-4" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-semibold text-foreground">{issue.title}</p>
+                          <span className={cn("rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize", STATUS_STYLE[issue.status])}>{issue.status}</span>
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{issue.description}</p>
+                        <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+                          <code className="font-mono">
+                            {issue.method} {issue.endpoint}
+                          </code>
+                          <span className="capitalize">{issue.category}</span>
+                          <span>{formatDistanceToNowStrict(new Date(issue.createdAt), { addSuffix: true })}</span>
+                        </div>
                       </div>
-                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{issue.description}</p>
-                      <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
-                        <code className="font-mono">
-                          {issue.method} {issue.endpoint}
-                        </code>
-                        <span>{issue.category}</span>
-                        <span>{formatDistanceToNowStrict(new Date(issue.discoveredAt), { addSuffix: true })}</span>
-                      </div>
-                    </div>
-                    <ChevronRight className="mt-1 size-4 shrink-0 text-muted-foreground opacity-0 transition-all group-hover:translate-x-0.5 group-hover:opacity-100" />
-                  </motion.button>
-                ))}
+                      <ChevronRight className="mt-1 size-4 shrink-0 text-muted-foreground opacity-0 transition-all group-hover:translate-x-0.5 group-hover:opacity-100" />
+                    </motion.button>
+                  ))}
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
 
       <div className="flex justify-end">
@@ -266,12 +316,21 @@ function ReportStat({
   );
 }
 
-function IssueSidePanel({ issue, projectId, onClose }: { issue: SecurityIssue | null; projectId: string; onClose: () => void }) {
+function LatencyStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] py-4 text-center">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 text-xl font-bold tabular-nums text-foreground">{value}ms</p>
+    </div>
+  );
+}
+
+function IssueSidePanel({ issue, projectId, onClose }: { issue: ApiFinding | null; projectId: string; onClose: () => void }) {
   const navigate = useNavigate();
 
   const handleCopyFix = async () => {
     if (!issue) return;
-    await navigator.clipboard.writeText(issue.fix);
+    await navigator.clipboard.writeText(issue.recommendation);
     toast.success("Suggested fix copied to clipboard");
   };
 
@@ -322,19 +381,16 @@ function IssueSidePanel({ issue, projectId, onClose }: { issue: SecurityIssue | 
                       <Sparkles className="size-3.5" /> AI Explanation
                     </h3>
                     <p className="text-sm text-muted-foreground">{issue.description}</p>
-                    <p className="rounded-xl border border-critical/20 bg-critical/[0.06] p-3 text-sm text-muted-foreground">{issue.risk}</p>
+                    {issue.confidence != null && (
+                      <p className="text-xs text-muted-foreground">AI confidence: {Math.round(issue.confidence * 100)}%</p>
+                    )}
                   </section>
 
                   <section className="space-y-2">
                     <h3 className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-success uppercase">
                       <Check className="size-3.5" /> Suggested Fix
                     </h3>
-                    <p className="text-sm text-muted-foreground">{issue.fix}</p>
-                  </section>
-
-                  <section className="space-y-2">
-                    <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Example Code</h3>
-                    <CodeBlock code={issue.codeSnippet} language={issue.codeLang} />
+                    <p className="text-sm text-muted-foreground">{issue.recommendation}</p>
                   </section>
                 </div>
 

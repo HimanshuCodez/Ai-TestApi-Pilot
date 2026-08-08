@@ -1,0 +1,281 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Enums ----------
+
+enum ProjectStatus {
+  scanning
+  healthy
+  warning
+  critical
+}
+
+enum ApiSourceKind {
+  URL
+  FILE
+  GITHUB
+}
+
+enum RawFormat {
+  JSON
+  YAML
+}
+
+enum EndpointSource {
+  openapi
+  github
+}
+
+enum AnalysisKind {
+  endpoint_quality
+  failure
+  report_insight
+}
+
+enum TestCategory {
+  positive
+  negative
+  boundary
+  security
+  auth
+}
+
+enum Severity {
+  critical
+  high
+  medium
+  low
+}
+
+enum TestRunStatus {
+  queued
+  running
+  passed
+  failed
+}
+
+enum FindingStatus {
+  open
+  acknowledged
+  resolved
+}
+
+enum JobType {
+  analyze_url
+  analyze_endpoints
+  generate_tests
+  run_tests
+}
+
+enum JobStatus {
+  queued
+  processing
+  completed
+  failed
+}
+
+// ---------- Models ----------
+
+model User {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  projects     Project[]
+}
+
+model Project {
+  id             String        @id @default(cuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  description    String        @default("")
+  baseUrl        String?
+  status         ProjectStatus @default(scanning)
+  healthScore    Int           @default(0)
+  securityScore  Int           @default(0)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  apiSource       ApiSource?
+  endpoints       Endpoint[]
+  aiAnalyses      AIAnalysis[]
+  generatedTests  GeneratedTest[]
+  testRuns        TestRun[]
+  findings        Finding[]
+  reports         Report[]
+  jobs            Job[]
+
+  @@index([userId])
+}
+
+model ApiSource {
+  id          String        @id @default(cuid())
+  projectId   String        @unique
+  project     Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  kind        ApiSourceKind
+  sourceUrl   String?
+  fileName    String?
+  specVersion String?
+  rawFormat   RawFormat
+  authSchemes Json          @default("[]")
+  fetchedAt   DateTime      @default(now())
+}
+
+model Endpoint {
+  id                String         @id @default(cuid())
+  projectId         String
+  project           Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  method            String
+  path              String
+  summary           String         @default("")
+  tag               String         @default("General")
+  authRequired      Boolean        @default(false)
+  parameters        Json           @default("[]")
+  requestBodySchema Json?
+  responses         Json           @default("[]")
+  source            EndpointSource @default(openapi)
+  createdAt         DateTime       @default(now())
+
+  aiAnalyses     AIAnalysis[]
+  generatedTests GeneratedTest[]
+
+  @@index([projectId])
+}
+
+model AIAnalysis {
+  id         String       @id @default(cuid())
+  projectId  String
+  project    Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  endpointId String?
+  endpoint   Endpoint?    @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  kind       AnalysisKind
+  input      Json
+  output     Json
+  confidence Float?
+  createdAt  DateTime     @default(now())
+
+  @@index([projectId])
+  @@index([endpointId])
+}
+
+model GeneratedTest {
+  id          String       @id @default(cuid())
+  projectId   String
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  endpointId  String
+  endpoint    Endpoint     @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  title       String
+  description String       @default("")
+  category    TestCategory
+  method      String
+  path        String
+  requestSpec Json
+  expected    Json
+  severity    Severity     @default(medium)
+  createdAt   DateTime     @default(now())
+
+  results TestResult[]
+
+  @@index([projectId])
+  @@index([endpointId])
+}
+
+model TestRun {
+  id         String        @id @default(cuid())
+  projectId  String
+  project    Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  status     TestRunStatus @default(queued)
+  startedAt  DateTime      @default(now())
+  finishedAt DateTime?
+  total      Int           @default(0)
+  passed     Int           @default(0)
+  failed     Int           @default(0)
+  skipped    Int           @default(0)
+
+  results TestResult[]
+  reports Report[]
+
+  @@index([projectId])
+}
+
+model TestResult {
+  id                     String        @id @default(cuid())
+  testRunId              String
+  testRun                TestRun       @relation(fields: [testRunId], references: [id], onDelete: Cascade)
+  generatedTestId        String
+  generatedTest          GeneratedTest @relation(fields: [generatedTestId], references: [id], onDelete: Cascade)
+  statusCode             Int?
+  durationMs             Int?
+  passed                 Boolean
+  responseBodyRedacted   Json?
+  responseHeadersRedacted Json?
+  errorMessage           String?
+  createdAt              DateTime      @default(now())
+
+  finding Finding?
+
+  @@index([testRunId])
+  @@index([generatedTestId])
+}
+
+model Finding {
+  id             String        @id @default(cuid())
+  projectId      String
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  testResultId   String?       @unique
+  testResult     TestResult?   @relation(fields: [testResultId], references: [id], onDelete: SetNull)
+  severity       Severity
+  title          String
+  category       String
+  endpoint       String
+  method         String
+  description    String
+  recommendation String
+  confidence     Float?
+  status         FindingStatus @default(open)
+  createdAt      DateTime      @default(now())
+
+  @@index([projectId])
+}
+
+model Report {
+  id               String   @id @default(cuid())
+  projectId        String
+  project          Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  testRunId        String
+  testRun          TestRun  @relation(fields: [testRunId], references: [id], onDelete: Cascade)
+  healthScore      Int
+  securityScore    Int
+  coverageScore    Int
+  performanceScore Int
+  metrics          Json
+  aiInsights       Json?
+  createdAt        DateTime @default(now())
+
+  @@index([projectId])
+}
+
+model Job {
+  id         String    @id @default(cuid())
+  projectId  String
+  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type       JobType
+  status     JobStatus @default(queued)
+  stage      String    @default("QUEUED")
+  progress   Int       @default(0)
+  error      String?
+  resultRef  String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([projectId])
+}

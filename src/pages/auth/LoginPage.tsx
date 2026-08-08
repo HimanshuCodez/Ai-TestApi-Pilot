@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
-import { sleep } from "@/lib/utils";
+import { ApiError } from "@/lib/api";
 import { useAuthStore } from "@/store/useAuthStore";
 
 const schema = z.object({
@@ -38,11 +38,31 @@ export default function LoginPage() {
 
   const onSubmit = async (values: FormValues) => {
     setSubmitting(true);
-    await sleep(900);
-    login(values.email);
-    toast.success("Welcome back!", { description: "Signed in successfully." });
-    setSubmitting(false);
-    navigate("/app/dashboard");
+    try {
+      await login(values.email, values.password);
+      toast.success("Welcome back!", { description: "Signed in successfully." });
+      navigate("/app/dashboard");
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Couldn't sign in. Please try again.";
+      toast.error("Sign in failed", { description: message });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const continueAsGuest = async () => {
+    setSubmitting(true);
+    try {
+      const guestEmail = `guest-${Date.now().toString(36)}@testpilot.ai`;
+      await useAuthStore.getState().register("Guest", guestEmail, "guestpass123");
+      toast.success("Welcome!", { description: "You're browsing as a guest." });
+      navigate("/app/dashboard");
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Couldn't start a guest session. Please try again.";
+      toast.error("Guest sign-in failed", { description: message });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -97,7 +117,7 @@ export default function LoginPage() {
       </div>
 
       <motion.div whileHover={{ y: -1 }}>
-        <Button variant="outline" className="w-full" size="lg" type="button" onClick={() => onSubmit({ email: "guest@testpilot.ai", password: "guestpass", remember: true })}>
+        <Button variant="outline" className="w-full" size="lg" type="button" disabled={submitting} onClick={continueAsGuest}>
           Continue as guest
         </Button>
       </motion.div>

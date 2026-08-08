@@ -21,6 +21,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useProjectsStore } from "@/store/useProjectsStore";
 import { useWorkflowStore } from "@/store/useWorkflowStore";
+import { useSyncWorkflow } from "@/hooks/useSyncWorkflow";
 import { cn } from "@/lib/utils";
 
 export default function ProjectOverviewPage() {
@@ -28,6 +29,7 @@ export default function ProjectOverviewPage() {
   const navigate = useNavigate();
   const project = useProjectsStore((s) => s.projects.find((p) => p.id === projectId));
   const workflow = useWorkflowStore((s) => s.getWorkflow(projectId));
+  useSyncWorkflow(projectId);
 
   if (!project) return <Navigate to="/app/projects" replace />;
 

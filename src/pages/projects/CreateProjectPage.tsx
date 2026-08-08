@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowRight, Boxes, Loader2, Rocket, X } from "lucide-react";
+import { toast } from "sonner";
 import { GlowBackground } from "@/components/shared/GlowBackground";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useProjectsStore, type Environment } from "@/store/useProjectsStore";
+import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const environments: { value: Environment; label: string; description: string; dot: string }[] = [
@@ -31,9 +33,14 @@ export default function CreateProjectPage() {
     e.preventDefault();
     if (!canSubmit) return;
     setSubmitting(true);
-    await new Promise((r) => setTimeout(r, 900));
-    const project = addProject({ name: name.trim(), description: description.trim(), environment });
-    navigate(`/app/projects/${project.id}/upload`);
+    try {
+      const project = await addProject({ name: name.trim(), description: description.trim(), environment });
+      navigate(`/app/projects/${project.id}/upload`);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Couldn't create the project. Please try again.";
+      toast.error("Something went wrong", { description: message });
+      setSubmitting(false);
+    }
   };
 
   return (

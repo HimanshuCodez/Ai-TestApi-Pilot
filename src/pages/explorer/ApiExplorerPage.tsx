@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown, Lock, LockOpen, Search, Sparkles } from "lucide-react";
@@ -12,7 +12,9 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useProjectsStore } from "@/store/useProjectsStore";
 import { useWorkflowStore } from "@/store/useWorkflowStore";
-import { endpoints } from "@/services/mockData";
+import { listEndpoints } from "@/services/api/projects";
+import type { ApiEndpoint } from "@/services/api/types";
+import type { HttpMethod } from "@/types";
 import { cn } from "@/lib/utils";
 
 export default function ApiExplorerPage() {
@@ -21,9 +23,24 @@ export default function ApiExplorerPage() {
   const project = useProjectsStore((s) => s.projects.find((p) => p.id === projectId));
   const workflow = useWorkflowStore((s) => s.getWorkflow(projectId));
 
+  const [endpoints, setEndpoints] = useState<ApiEndpoint[]>([]);
   const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState(endpoints[0]?.id);
+  const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
   const [collapsedTags, setCollapsedTags] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+    listEndpoints(projectId)
+      .then((eps) => {
+        if (cancelled) return;
+        setEndpoints(eps);
+        setSelectedId((current) => current ?? eps[0]?.id);
+      })
+      .catch(() => !cancelled && setEndpoints([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
   const grouped = useMemo(() => {
     const filtered = endpoints.filter(
@@ -33,29 +50,29 @@ export default function ApiExplorerPage() {
         e.summary.toLowerCase().includes(query.toLowerCase()) ||
         e.tag.toLowerCase().includes(query.toLowerCase())
     );
-    const map = new Map<string, typeof endpoints>();
+    const map = new Map<string, ApiEndpoint[]>();
     filtered.forEach((e) => {
       const list = map.get(e.tag) ?? [];
       list.push(e);
       map.set(e.tag, list);
     });
     return Array.from(map.entries());
-  }, [query]);
+  }, [endpoints, query]);
 
   const selected = endpoints.find((e) => e.id === selectedId) ?? endpoints[0];
 
   if (!project) return <Navigate to="/app/projects" replace />;
 
-  if (!workflow.analyzed) {
+  if (!workflow.uploaded) {
     return (
       <div className="space-y-8">
         <PageHeader eyebrow={project.name} title="API Explorer" description="Browse every endpoint, schema and example." />
         <EmptyState
           icon={Sparkles}
-          title="Run AI Analysis first"
+          title="Connect your API first"
           description="TestPilot AI needs to map your endpoints before you can explore them."
-          actionLabel="Go to AI Analysis"
-          onAction={() => navigate(`/app/projects/${projectId}/analysis`)}
+          actionLabel="Go to Upload"
+          onAction={() => navigate(`/app/projects/${projectId}/upload`)}
         />
       </div>
     );
@@ -69,6 +86,10 @@ export default function ApiExplorerPage() {
       return next;
     });
   }
+
+  const params = selected?.parameters.filter((p) => p.in !== "header") ?? [];
+  const headers = selected?.parameters.filter((p) => p.in === "header") ?? [];
+  const requestBody = selected?.requestBodySchema ? JSON.stringify(selected.requestBodySchema, null, 2) : undefined;
 
   return (
     <div className="space-y-6">
@@ -114,9 +135,8 @@ export default function ApiExplorerPage() {
                               selected?.id === ep.id ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:bg-white/[0.04] hover:text-foreground"
                             )}
                           >
-                            <MethodBadge method={ep.method} className="h-5 w-[52px] text-[10px]" />
+                            <MethodBadge method={ep.method as HttpMethod} className="h-5 w-[52px] text-[10px]" />
                             <span className="truncate font-mono text-xs">{ep.path}</span>
-                            {ep.issueCount > 0 && <span className="ml-auto size-1.5 shrink-0 rounded-full bg-critical" />}
                           </button>
                         ))}
                       </motion.div>
@@ -140,7 +160,7 @@ export default function ApiExplorerPage() {
               <Card className="gap-0 overflow-hidden py-0">
                 <div className="border-b border-white/[0.06] p-6">
                   <div className="flex flex-wrap items-center gap-3">
-                    <MethodBadge method={selected.method} className="h-7 w-[70px] text-xs" />
+                    <MethodBadge method={selected.method as HttpMethod} className="h-7 w-[70px] text-xs" />
                     <code className="font-mono text-base font-semibold text-foreground">{selected.path}</code>
                     <span
                       className={cn(
@@ -152,43 +172,25 @@ export default function ApiExplorerPage() {
                       {selected.authRequired ? "Auth required" : "Public"}
                     </span>
                   </div>
-                  <p className="mt-3 text-sm text-muted-foreground">{selected.summary}</p>
-                  <div className="mt-4 flex items-center gap-4">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs text-muted-foreground">Health</span>
-                      <span
-                        className={cn(
-                          "text-sm font-bold tabular-nums",
-                          selected.healthScore >= 85 ? "text-success" : selected.healthScore >= 60 ? "text-warning" : "text-critical"
-                        )}
-                      >
-                        {selected.healthScore}%
-                      </span>
-                    </div>
-                    {selected.issueCount > 0 && (
-                      <span className="rounded-full border border-critical/25 bg-critical/10 px-2.5 py-1 text-xs font-medium text-critical">
-                        {selected.issueCount} issue{selected.issueCount > 1 ? "s" : ""} found
-                      </span>
-                    )}
-                  </div>
+                  <p className="mt-3 text-sm text-muted-foreground">{selected.summary || "No summary provided."}</p>
                 </div>
 
                 <Tabs defaultValue="overview" className="gap-0">
                   <div className="sticky top-0 z-10 border-b border-white/[0.06] bg-card/95 px-6 py-3 backdrop-blur">
                     <TabsList>
                       <TabsTrigger value="overview">Overview</TabsTrigger>
-                      <TabsTrigger value="params">Parameters ({selected.params.length})</TabsTrigger>
-                      <TabsTrigger value="headers">Headers ({selected.headers.length})</TabsTrigger>
+                      <TabsTrigger value="params">Parameters ({params.length})</TabsTrigger>
+                      <TabsTrigger value="headers">Headers ({headers.length})</TabsTrigger>
                       <TabsTrigger value="responses">Responses ({selected.responses.length})</TabsTrigger>
                     </TabsList>
                   </div>
 
                   <div className="p-6">
                     <TabsContent value="overview" className="mt-0 space-y-5">
-                      {selected.requestBody ? (
+                      {requestBody ? (
                         <div>
                           <p className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">Request Body</p>
-                          <CodeBlock code={selected.requestBody} language="json" />
+                          <CodeBlock code={requestBody} language="json" />
                         </div>
                       ) : (
                         <p className="text-sm text-muted-foreground">This endpoint does not require a request body.</p>
@@ -202,18 +204,18 @@ export default function ApiExplorerPage() {
                     </TabsContent>
 
                     <TabsContent value="params" className="mt-0">
-                      {selected.params.length === 0 ? (
+                      {params.length === 0 ? (
                         <p className="text-sm text-muted-foreground">No query or path parameters.</p>
                       ) : (
-                        <ParamTable rows={selected.params} />
+                        <ParamTable rows={params} />
                       )}
                     </TabsContent>
 
                     <TabsContent value="headers" className="mt-0">
-                      {selected.headers.length === 0 ? (
+                      {headers.length === 0 ? (
                         <p className="text-sm text-muted-foreground">No required headers.</p>
                       ) : (
-                        <ParamTable rows={selected.headers} />
+                        <ParamTable rows={headers} />
                       )}
                     </TabsContent>
 

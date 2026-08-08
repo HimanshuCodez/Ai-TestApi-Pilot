@@ -1,6 +1,7 @@
 import { create } from "zustand";
-import { recentRuns, testCases } from "@/services/mockData";
-import type { RunStatus, TestCase } from "@/types";
+import { persist } from "zustand/middleware";
+import type { RunStatus, TestCase, TestKind } from "@/types";
+import type { ApiGeneratedTest, ApiTestResult } from "@/services/api/types";
 
 export interface RunResult {
   status: RunStatus;
@@ -31,112 +32,121 @@ const EMPTY: ProjectWorkflow = {
   testsRun: false,
 };
 
-function seededWorkflow(projectId: string): ProjectWorkflow | null {
-  const run = recentRuns.find((r) => r.projectId === projectId);
-  if (projectId === "proj-payflow" || projectId === "proj-nova" || projectId === "proj-orbit") {
-    return {
-      uploaded: true,
-      fileName: "openapi.json",
-      fileMeta: "412 KB · OpenAPI 3.0",
-      analyzed: true,
-      testsGenerated: true,
-      tests: testCases,
-      testsRun: true,
-      runResult: run
-        ? {
-            status: run.status,
-            total: run.total,
-            passed: run.passed,
-            failed: run.failed,
-            skipped: run.skipped,
-            durationMs: run.durationMs,
-            finishedAt: run.startedAt,
-          }
-        : undefined,
-    };
-  }
-  if (projectId === "proj-atlas") {
-    return {
-      uploaded: true,
-      fileName: "atlas-gateway.yaml",
-      fileMeta: "168 KB · OpenAPI 3.1",
-      analyzed: false,
-      testsGenerated: false,
-      tests: [],
-      testsRun: false,
-    };
-  }
-  return null;
-}
-
 interface WorkflowState {
   byProject: Record<string, ProjectWorkflow>;
   getWorkflow: (projectId: string) => ProjectWorkflow;
+  setWorkflow: (projectId: string, patch: Partial<ProjectWorkflow>) => void;
   setUploaded: (projectId: string, fileName: string, fileMeta: string) => void;
   setAnalyzed: (projectId: string) => void;
   setTests: (projectId: string, tests: TestCase[]) => void;
   updateTest: (projectId: string, testId: string, patch: Partial<TestCase>) => void;
-  setTestsRun: (projectId: string, result: RunResult) => void;
+  applyRunResults: (projectId: string, tests: TestCase[], result: RunResult) => void;
   resetTestsRun: (projectId: string) => void;
 }
 
-export const useWorkflowStore = create<WorkflowState>((set, get) => ({
-  byProject: {},
+export const useWorkflowStore = create<WorkflowState>()(
+  persist(
+    (set, get) => ({
+      byProject: {},
 
-  getWorkflow: (projectId) => {
-    const existing = get().byProject[projectId];
-    if (existing) return existing;
-    return seededWorkflow(projectId) ?? EMPTY;
-  },
+      getWorkflow: (projectId) => get().byProject[projectId] ?? EMPTY,
 
-  setUploaded: (projectId, fileName, fileMeta) =>
-    set((s) => ({
-      byProject: {
-        ...s.byProject,
-        [projectId]: { ...get().getWorkflow(projectId), uploaded: true, fileName, fileMeta },
-      },
-    })),
+      setWorkflow: (projectId, patch) =>
+        set((s) => ({
+          byProject: { ...s.byProject, [projectId]: { ...get().getWorkflow(projectId), ...patch } },
+        })),
 
-  setAnalyzed: (projectId) =>
-    set((s) => ({
-      byProject: {
-        ...s.byProject,
-        [projectId]: { ...get().getWorkflow(projectId), analyzed: true },
-      },
-    })),
+      setUploaded: (projectId, fileName, fileMeta) =>
+        set((s) => ({
+          byProject: {
+            ...s.byProject,
+            [projectId]: { ...get().getWorkflow(projectId), uploaded: true, fileName, fileMeta },
+          },
+        })),
 
-  setTests: (projectId, tests) =>
-    set((s) => ({
-      byProject: {
-        ...s.byProject,
-        [projectId]: { ...get().getWorkflow(projectId), testsGenerated: true, tests, testsRun: false, runResult: undefined },
-      },
-    })),
+      setAnalyzed: (projectId) =>
+        set((s) => ({
+          byProject: { ...s.byProject, [projectId]: { ...get().getWorkflow(projectId), analyzed: true } },
+        })),
 
-  updateTest: (projectId, testId, patch) =>
-    set((s) => {
-      const wf = get().getWorkflow(projectId);
-      return {
-        byProject: {
-          ...s.byProject,
-          [projectId]: { ...wf, tests: wf.tests.map((t) => (t.id === testId ? { ...t, ...patch } : t)) },
-        },
-      };
+      setTests: (projectId, tests) =>
+        set((s) => ({
+          byProject: {
+            ...s.byProject,
+            [projectId]: { ...get().getWorkflow(projectId), testsGenerated: true, tests, testsRun: false, runResult: undefined },
+          },
+        })),
+
+      updateTest: (projectId, testId, patch) =>
+        set((s) => {
+          const wf = get().getWorkflow(projectId);
+          return {
+            byProject: {
+              ...s.byProject,
+              [projectId]: { ...wf, tests: wf.tests.map((t) => (t.id === testId ? { ...t, ...patch } : t)) },
+            },
+          };
+        }),
+
+      applyRunResults: (projectId, tests, result) =>
+        set((s) => {
+          const wf = get().getWorkflow(projectId);
+          return {
+            byProject: {
+              ...s.byProject,
+              [projectId]: {
+                ...wf,
+                tests,
+                testsGenerated: wf.testsGenerated || tests.length > 0,
+                testsRun: true,
+                runResult: result,
+              },
+            },
+          };
+        }),
+
+      resetTestsRun: (projectId) =>
+        set((s) => ({
+          byProject: {
+            ...s.byProject,
+            [projectId]: { ...get().getWorkflow(projectId), testsRun: false, runResult: undefined },
+          },
+        })),
     }),
+    { name: "testpilot-workflow" }
+  )
+);
 
-  setTestsRun: (projectId, result) =>
-    set((s) => ({
-      byProject: {
-        ...s.byProject,
-        [projectId]: { ...get().getWorkflow(projectId), testsRun: true, runResult: result },
-      },
-    })),
+/** Maps a backend GeneratedTest (+ its TestResult, once a run has happened) into the UI's local TestCase shape. */
+export function toWorkflowTestCase(apiTest: ApiGeneratedTest, result?: ApiTestResult): TestCase {
+  const kind: TestKind = apiTest.category === "auth" ? "security" : (apiTest.category as TestKind);
 
-  resetTestsRun: (projectId) =>
-    set((s) => ({
-      byProject: {
-        ...s.byProject,
-        [projectId]: { ...get().getWorkflow(projectId), testsRun: false, runResult: undefined },
-      },
-    })),
-}));
+  const requestLines = [`${apiTest.method} ${apiTest.path}`];
+  const headers = apiTest.requestSpec?.headers;
+  if (headers && Object.keys(headers).length > 0) {
+    requestLines.push(...Object.entries(headers).map(([key, value]) => `${key}: ${String(value)}`));
+  }
+  const body = apiTest.requestSpec?.body;
+  if (body !== undefined && body !== null) {
+    requestLines.push(JSON.stringify(body, null, 2));
+  }
+
+  const expected = `Status ${apiTest.expected.statusCodes.join(" or ")}${
+    apiTest.expected.notes ? ` — ${apiTest.expected.notes}` : ""
+  }`;
+
+  return {
+    id: apiTest.id,
+    endpointId: apiTest.endpointId,
+    method: apiTest.method as TestCase["method"],
+    path: apiTest.path,
+    kind,
+    title: apiTest.title,
+    description: apiTest.description,
+    request: requestLines.join("\n"),
+    expected,
+    status: result ? (result.passed ? "passed" : "failed") : undefined,
+    durationMs: result?.durationMs ?? undefined,
+    severity: apiTest.severity,
+  };
+}

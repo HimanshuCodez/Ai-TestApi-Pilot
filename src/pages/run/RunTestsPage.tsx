@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { BarChart3, CheckCircle2, Play, RotateCcw, Sparkles, TerminalSquare, XCircle } from "lucide-react";
+import { toast } from "sonner";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { RunStatusPill } from "@/components/shared/StatusPill";
@@ -9,46 +10,36 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useProjectsStore } from "@/store/useProjectsStore";
-import { useWorkflowStore } from "@/store/useWorkflowStore";
-import type { TestCase } from "@/types";
+import { useWorkflowStore, toWorkflowTestCase, type RunResult } from "@/store/useWorkflowStore";
+import { useJobProgress } from "@/hooks/useJobProgress";
+import { getTestRun, runTests } from "@/services/api/projects";
+import { ApiError } from "@/lib/api";
+import type { RunStatus } from "@/types";
 import { cn } from "@/lib/utils";
 
 type Phase = "idle" | "running" | "done";
-type LineKind = "command" | "info" | "success" | "run" | "pass" | "fail" | "summary";
 
 interface LogLine {
   id: string;
   text: string;
-  kind: LineKind;
+  kind: "command" | "info" | "success" | "live";
 }
 
-function buildLines(tests: TestCase[], baseUrl: string): LogLine[] {
-  const lines: LogLine[] = [
+function buildPreamble(total: number, baseUrl: string): LogLine[] {
+  return [
     { id: "cmd", text: `$ testpilot run --project ${baseUrl}`, kind: "command" },
-    { id: "init-1", text: `Initializing AI test runner...`, kind: "info" },
-    { id: "init-2", text: `Loaded ${tests.length} test cases across the mapped endpoint surface`, kind: "info" },
+    { id: "init-1", text: `Initializing test runner...`, kind: "info" },
+    { id: "init-2", text: `Loaded ${total} test cases across the mapped endpoint surface`, kind: "info" },
     { id: "init-3", text: `Connecting to ${baseUrl} ...`, kind: "info" },
     { id: "init-4", text: `Connection established. Starting run.`, kind: "success" },
   ];
-  tests.forEach((t) => {
-    lines.push({ id: `${t.id}-run`, text: `RUN   ${t.method.padEnd(6)} ${t.path}  — ${t.title}`, kind: "run" });
-    if (t.status === "failed") {
-      lines.push({ id: `${t.id}-res`, text: `FAIL  ${t.method.padEnd(6)} ${t.path}  (${t.durationMs ?? 120}ms) — assertion failed`, kind: "fail" });
-    } else {
-      lines.push({ id: `${t.id}-res`, text: `PASS  ${t.method.padEnd(6)} ${t.path}  (${t.durationMs ?? 120}ms)`, kind: "pass" });
-    }
-  });
-  return lines;
 }
 
-const LINE_STYLE: Record<LineKind, string> = {
+const LINE_STYLE: Record<LogLine["kind"], string> = {
   command: "text-foreground font-medium",
   info: "text-muted-foreground",
   success: "text-success",
-  run: "text-muted-foreground/70",
-  pass: "text-success",
-  fail: "text-critical",
-  summary: "text-foreground font-medium",
+  live: "text-primary",
 };
 
 export default function RunTestsPage() {
@@ -56,56 +47,66 @@ export default function RunTestsPage() {
   const navigate = useNavigate();
   const project = useProjectsStore((s) => s.projects.find((p) => p.id === projectId));
   const workflow = useWorkflowStore((s) => s.getWorkflow(projectId));
-  const setTestsRun = useWorkflowStore((s) => s.setTestsRun);
+  const applyRunResults = useWorkflowStore((s) => s.applyRunResults);
 
   const [phase, setPhase] = useState<Phase>(workflow.testsRun ? "done" : "idle");
-  const [tick, setTick] = useState(0);
-  const [elapsedMs, setElapsedMs] = useState(0);
-  const startRef = useRef(0);
+  const [jobId, setJobId] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setPhase(workflow.testsRun ? "done" : "idle");
-    setTick(0);
-    setElapsedMs(0);
+    setJobId(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   const tests = workflow.tests;
-  const lines = useMemo(() => buildLines(tests, project?.baseUrl ?? "api"), [tests, project?.baseUrl]);
+  const preamble = useMemo(() => buildPreamble(tests.length, project?.baseUrl ?? "api"), [tests.length, project?.baseUrl]);
 
-  useEffect(() => {
-    if (phase !== "running") return;
-    if (tick >= lines.length) {
-      const passed = tests.filter((t) => t.status !== "failed").length;
-      const failed = tests.filter((t) => t.status === "failed").length;
-      setTestsRun(projectId, {
-        status: failed > 0 ? "failed" : "passed",
-        total: tests.length,
-        passed,
-        failed,
-        skipped: 0,
-        durationMs: Date.now() - startRef.current,
-        finishedAt: new Date().toISOString(),
-      });
-      setPhase("done");
-      return;
+  const jobProgress = useJobProgress(jobId, async (finalState) => {
+    if (finalState.status === "completed") {
+      try {
+        let ref: { testRunId?: string } = {};
+        try {
+          ref = finalState.resultRef ? JSON.parse(finalState.resultRef) : {};
+        } catch {
+          // ignore — testRunId stays undefined and we fall through to a friendly error
+        }
+        if (!ref.testRunId) throw new Error("Missing test run reference");
+
+        const testRun = await getTestRun(projectId, ref.testRunId);
+        const mergedTests = (testRun.results ?? [])
+          .filter((r) => r.generatedTest)
+          .map((r) => toWorkflowTestCase(r.generatedTest!, r));
+
+        const durationMs = testRun.finishedAt
+          ? new Date(testRun.finishedAt).getTime() - new Date(testRun.startedAt).getTime()
+          : 0;
+        const runResult: RunResult = {
+          status: testRun.status as RunStatus,
+          total: testRun.total,
+          passed: testRun.passed,
+          failed: testRun.failed,
+          skipped: testRun.skipped,
+          durationMs,
+          finishedAt: testRun.finishedAt ?? new Date().toISOString(),
+        };
+        applyRunResults(projectId, mergedTests, runResult);
+        setPhase("done");
+      } catch {
+        toast.error("Run finished, but results couldn't be loaded. Try refreshing.");
+        setPhase("idle");
+      }
+      setJobId(null);
+    } else if (finalState.status === "failed") {
+      toast.error("Test run failed", { description: finalState.error ?? "Please try again." });
+      setPhase("idle");
+      setJobId(null);
     }
-    const line = lines[tick];
-    const delay = line.kind === "command" ? 450 : line.kind === "run" ? 55 : line.kind === "pass" || line.kind === "fail" ? 110 : 260;
-    const t = setTimeout(() => setTick((n) => n + 1), delay);
-    return () => clearTimeout(t);
-  }, [phase, tick, lines, tests, projectId, setTestsRun]);
-
-  useEffect(() => {
-    if (phase !== "running") return;
-    const id = setInterval(() => setElapsedMs(Date.now() - startRef.current), 100);
-    return () => clearInterval(id);
-  }, [phase]);
+  });
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [tick]);
+  }, [jobProgress.progress]);
 
   if (!project) return <Navigate to="/app/projects" replace />;
 
@@ -124,22 +125,28 @@ export default function RunTestsPage() {
     );
   }
 
-  function startRun() {
-    startRef.current = Date.now();
-    setElapsedMs(0);
-    setTick(0);
+  async function startRun() {
     setPhase("running");
+    try {
+      const { jobId: newJobId } = await runTests(projectId);
+      setJobId(newJobId);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Couldn't start the test run. Please try again.";
+      toast.error("Run failed to start", { description: message });
+      setPhase("idle");
+    }
   }
 
-  const revealedTestLines = Math.min(Math.max(tick - 5, 0), tests.length * 2);
-  const resolvedCount = Math.floor(revealedTestLines / 2);
-  const runningIndex = revealedTestLines % 2 === 1 ? resolvedCount : -1;
-  const passedSoFar = tests.slice(0, resolvedCount).filter((t) => t.status !== "failed").length;
-  const failedSoFar = tests.slice(0, resolvedCount).filter((t) => t.status === "failed").length;
-  const progressPct = tests.length ? Math.round((resolvedCount / tests.length) * 100) : 0;
+  const completedCount = Math.min(tests.length, Math.round((jobProgress.progress / 100) * tests.length));
+  const progressPct = jobProgress.progress;
 
-  const finalPassed = workflow.runResult?.passed ?? tests.filter((t) => t.status !== "failed").length;
-  const finalFailed = workflow.runResult?.failed ?? tests.filter((t) => t.status === "failed").length;
+  const liveLines: LogLine[] = [
+    ...preamble,
+    { id: "live", text: `RUNNING  ${completedCount}/${tests.length} tests executed...`, kind: "live" },
+  ];
+
+  const finalPassed = workflow.runResult?.passed ?? 0;
+  const finalFailed = workflow.runResult?.failed ?? 0;
   const finalTotal = workflow.runResult?.total ?? tests.length;
   const finalPassRate = finalTotal ? Math.round((finalPassed / finalTotal) * 100) : 0;
 
@@ -174,7 +181,7 @@ export default function RunTestsPage() {
               </motion.div>
               <h3 className="relative text-lg font-semibold text-foreground">Ready to run {tests.length} tests</h3>
               <p className="relative mt-1.5 max-w-md text-sm text-muted-foreground">
-                TestPilot AI will stream live results as each request hits {project.baseUrl}.
+                TestPilot AI will stream live progress as each request hits {project.baseUrl}.
               </p>
               <Button size="lg" className="relative mt-6" onClick={startRun}>
                 <Play className="size-4" /> Run Test Suite
@@ -187,9 +194,9 @@ export default function RunTestsPage() {
           <motion.div key="running" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-5">
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
               <LiveStat label="Total" value={tests.length} />
-              <LiveStat label="Passed" value={passedSoFar} accent="text-success" />
-              <LiveStat label="Failed" value={failedSoFar} accent="text-critical" />
-              <LiveStat label="Elapsed" value={`${(elapsedMs / 1000).toFixed(1)}s`} />
+              <LiveStat label="Completed" value={completedCount} accent="text-primary" />
+              <LiveStat label="Progress" value={`${progressPct}%`} />
+              <LiveStat label="Stage" value={jobProgress.stage || "QUEUED"} />
             </div>
 
             <Card className="gap-2 py-4">
@@ -210,7 +217,7 @@ export default function RunTestsPage() {
                 <span className="ml-2 font-mono text-xs text-muted-foreground">testpilot — live run</span>
               </div>
               <div ref={logRef} className="scrollbar-none max-h-[420px] space-y-1 overflow-y-auto p-5 font-mono text-[12.5px] leading-relaxed">
-                {lines.slice(0, tick).map((line) => (
+                {liveLines.map((line) => (
                   <motion.div
                     key={line.id}
                     initial={{ opacity: 0, x: -4 }}
@@ -235,7 +242,7 @@ export default function RunTestsPage() {
                   key={t.id}
                   className={cn(
                     "size-2.5 rounded-[3px] transition-colors duration-200",
-                    i < resolvedCount ? (t.status === "failed" ? "bg-critical" : "bg-success") : i === runningIndex ? "animate-pulse bg-primary" : "bg-white/10"
+                    i < completedCount ? "bg-primary" : "bg-white/10"
                   )}
                   title={`${t.method} ${t.path}`}
                 />

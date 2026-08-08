@@ -72,6 +72,7 @@ export interface TestCase {
   expected: string;
   status?: RunStatus;
   durationMs?: number;
+  severity?: Severity;
 }
 
 export interface SecurityIssue {

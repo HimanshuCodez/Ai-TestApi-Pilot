@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { sleep } from "@/lib/utils";
+import { ApiError } from "@/lib/api";
 import { useAuthStore } from "@/store/useAuthStore";
 
 const schema = z
@@ -28,7 +28,7 @@ type FormValues = z.infer<typeof schema>;
 
 export default function RegisterPage() {
   const navigate = useNavigate();
-  const login = useAuthStore((s) => s.login);
+  const registerUser = useAuthStore((s) => s.register);
   const [submitting, setSubmitting] = useState(false);
 
   const {
@@ -39,11 +39,16 @@ export default function RegisterPage() {
 
   const onSubmit = async (values: FormValues) => {
     setSubmitting(true);
-    await sleep(1000);
-    login(values.email);
-    toast.success("Account created", { description: `Welcome to TestPilot AI, ${values.name.split(" ")[0]}.` });
-    setSubmitting(false);
-    navigate("/app/dashboard");
+    try {
+      await registerUser(values.name, values.email, values.password);
+      toast.success("Account created", { description: `Welcome to TestPilot AI, ${values.name.split(" ")[0]}.` });
+      navigate("/app/dashboard");
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Couldn't create your account. Please try again.";
+      toast.error("Sign up failed", { description: message });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (

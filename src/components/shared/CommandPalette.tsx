@@ -78,21 +78,25 @@ export function CommandPalette() {
         </CommandGroup>
         <CommandSeparator />
         <CommandGroup heading="Quick Actions">
-          <CommandItem onSelect={() => go(`/app/projects/${projects[0].id}/upload`)}>
-            <UploadCloud /> Upload Swagger File
-          </CommandItem>
-          <CommandItem onSelect={() => go(`/app/projects/${projects[0].id}/analysis`)}>
-            <Sparkles /> Run AI Analysis
-          </CommandItem>
-          <CommandItem onSelect={() => go(`/app/projects/${projects[0].id}/tests`)}>
-            <FlaskConical /> View Generated Tests
-          </CommandItem>
-          <CommandItem onSelect={() => go(`/app/projects/${projects[0].id}/run`)}>
-            <TerminalSquare /> Run Test Suite
-          </CommandItem>
-          <CommandItem onSelect={() => go(`/app/projects/${projects[0].id}/reports`)}>
-            <BarChart3 /> View Reports
-          </CommandItem>
+          {projects[0] && (
+            <>
+              <CommandItem onSelect={() => go(`/app/projects/${projects[0].id}/upload`)}>
+                <UploadCloud /> Upload Swagger File
+              </CommandItem>
+              <CommandItem onSelect={() => go(`/app/projects/${projects[0].id}/analysis`)}>
+                <Sparkles /> Run AI Analysis
+              </CommandItem>
+              <CommandItem onSelect={() => go(`/app/projects/${projects[0].id}/tests`)}>
+                <FlaskConical /> View Generated Tests
+              </CommandItem>
+              <CommandItem onSelect={() => go(`/app/projects/${projects[0].id}/run`)}>
+                <TerminalSquare /> Run Test Suite
+              </CommandItem>
+              <CommandItem onSelect={() => go(`/app/projects/${projects[0].id}/reports`)}>
+                <BarChart3 /> View Reports
+              </CommandItem>
+            </>
+          )}
           <CommandItem onSelect={() => setTheme(theme === "dark" ? "light" : "dark")}>
             {theme === "dark" ? <Sun /> : <Moon />} Toggle Theme
             <CommandShortcut>⌘J</CommandShortcut>

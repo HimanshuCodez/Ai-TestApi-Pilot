@@ -1,54 +1,48 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import {
-  ArrowRight,
-  Bug,
-  Check,
-  KeyRound,
-  Layers,
-  ShieldAlert,
-  ShieldCheck,
-  Sparkles,
-  TriangleAlert,
-} from "lucide-react";
+import { ArrowRight, Check, KeyRound, Layers, ShieldAlert, ShieldCheck, Sparkles, TriangleAlert } from "lucide-react";
+import { toast } from "sonner";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { MethodBadge } from "@/components/shared/MethodBadge";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useProjectsStore } from "@/store/useProjectsStore";
 import { useWorkflowStore } from "@/store/useWorkflowStore";
-import { endpoints, securityIssues } from "@/services/mockData";
+import { useJobProgress } from "@/hooks/useJobProgress";
+import { analyzeEndpoints, listEndpoints } from "@/services/api/projects";
+import type { ApiEndpoint } from "@/services/api/types";
+import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { HttpMethod } from "@/types";
 
 type LogLine = { text: string; method?: HttpMethod };
 
 const preamble: LogLine[] = [
-  { text: "$ testpilot analyze --spec openapi.json" },
-  { text: "→ Reading swagger.json (412 KB)" },
-  { text: "→ Parsing schema & resolving $ref definitions" },
+  { text: "$ testpilot analyze --project" },
+  { text: "→ Loading mapped endpoints" },
+  { text: "→ Resolving schemas & auth requirements" },
 ];
 
 const postamble: LogLine[] = [
-  { text: "→ Detected Bearer JWT + API key schemes" },
+  { text: "→ Cross-checking auth schemes across endpoints" },
   { text: "→ Mapping relationships across resource tags" },
-  { text: "→ Fuzzing query & path parameters for injection" },
-  { text: "→ Validating JWT expiration & signature checks" },
-  { text: "→ Probing endpoints for missing rate-limit policies" },
-  { text: "→ Synthesizing positive, negative & boundary tests" },
-  { text: "→ Calculating security, performance & docs scores" },
+  { text: "→ Asking Gemini to review each endpoint for risk" },
+  { text: "→ Scoring endpoint quality & flagging concerns" },
   { text: "✓ Analysis complete" },
 ];
 
 const phrases = [
   "Analyzing endpoint relationships...",
-  "Generating security tests...",
-  "Finding vulnerabilities...",
+  "Reviewing auth requirements...",
+  "Finding potential risks...",
   "Understanding schemas...",
 ];
 
-const TICK_MS = 300;
+interface AnalyzeResult {
+  analyzed: number;
+  flagged: number;
+}
 
 export default function AiAnalysisPage() {
   const { projectId = "" } = useParams();
@@ -58,45 +52,74 @@ export default function AiAnalysisPage() {
   const workflow = useWorkflowStore((s) => s.getWorkflow(projectId));
   const setAnalyzed = useWorkflowStore((s) => s.setAnalyzed);
 
-  const lines = useMemo<LogLine[]>(
-    () => [...preamble, ...endpoints.map((e) => ({ text: `→ ${e.method} ${e.path}`, method: e.method })), ...postamble],
-    []
-  );
-
-  const [status, setStatus] = useState<"running" | "complete">(workflow.analyzed ? "complete" : "running");
-  const [tick, setTick] = useState(workflow.analyzed ? lines.length : 0);
-  const [phraseIdx, setPhraseIdx] = useState(0);
-  const [charCount, setCharCount] = useState(0);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [apiEndpoints, setApiEndpoints] = useState<ApiEndpoint[]>([]);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [jobResult, setJobResult] = useState<AnalyzeResult | null>(null);
   const startedRef = useRef(false);
 
   useEffect(() => {
-    if (status !== "running") return;
-    if (tick >= lines.length) {
-      const t = setTimeout(() => {
-        setStatus("complete");
-        if (!startedRef.current) return;
-        setAnalyzed(projectId);
-        const critical = securityIssues.filter((i) => i.severity === "critical").length;
-        const high = securityIssues.filter((i) => i.severity === "high").length;
-        const medium = securityIssues.filter((i) => i.severity === "medium").length;
-        const low = securityIssues.filter((i) => i.severity === "low").length;
-        const securityScore = Math.max(35, 100 - critical * 14 - high * 7 - medium * 3 - low);
-        const healthScore = Math.min(96, Math.round((securityScore + 82) / 2) + 6);
-        updateProject(projectId, {
-          status: securityScore < 60 ? "critical" : securityScore < 85 ? "warning" : "healthy",
-          healthScore,
-          securityScore,
-          endpointCount: endpoints.length,
-          lastScanAt: new Date().toISOString(),
-        });
-      }, 900);
-      return () => clearTimeout(t);
-    }
+    let cancelled = false;
+    listEndpoints(projectId)
+      .then((eps) => !cancelled && setApiEndpoints(eps))
+      .catch(() => !cancelled && setApiEndpoints([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  useEffect(() => {
+    if (workflow.analyzed || jobId || startedRef.current) return;
     startedRef.current = true;
-    const t = setTimeout(() => setTick((v) => v + 1), TICK_MS);
-    return () => clearTimeout(t);
-  }, [status, tick, lines.length, projectId, setAnalyzed, updateProject]);
+    analyzeEndpoints(projectId)
+      .then(({ jobId: newJobId }) => setJobId(newJobId))
+      .catch((err) => {
+        const message = err instanceof ApiError ? err.message : "Couldn't start AI analysis. Please try again.";
+        toast.error("AI analysis failed to start", { description: message });
+      });
+  }, [projectId, workflow.analyzed, jobId]);
+
+  const jobProgress = useJobProgress(jobId, (finalState) => {
+    if (finalState.status === "completed") {
+      let result: AnalyzeResult = { analyzed: apiEndpoints.length, flagged: 0 };
+      try {
+        result = finalState.resultRef ? JSON.parse(finalState.resultRef) : result;
+      } catch {
+        // resultRef wasn't parseable JSON — fall back to the default above
+      }
+      setJobResult(result);
+      setAnalyzed(projectId);
+
+      const flaggedRatio = result.analyzed ? result.flagged / result.analyzed : 0;
+      const securityScore = Math.max(35, Math.round(100 - flaggedRatio * 55));
+      const healthScore = Math.min(96, Math.round((securityScore + 82) / 2) + 6);
+      updateProject(projectId, {
+        status: securityScore < 60 ? "critical" : securityScore < 85 ? "warning" : "healthy",
+        healthScore,
+        securityScore,
+        endpointCount: apiEndpoints.length,
+        lastScanAt: new Date().toISOString(),
+      });
+    } else if (finalState.status === "failed") {
+      toast.error("AI analysis failed", { description: finalState.error ?? "Please try again." });
+    }
+  });
+
+  const lines = useMemo<LogLine[]>(
+    () => [
+      ...preamble,
+      ...apiEndpoints.map((e) => ({ text: `→ ${e.method} ${e.path}`, method: e.method as HttpMethod })),
+      ...postamble,
+    ],
+    [apiEndpoints]
+  );
+
+  const alreadyDone = workflow.analyzed && !jobId;
+  const status: "running" | "complete" = jobProgress.status === "completed" || alreadyDone ? "complete" : "running";
+  const tick = status === "complete" ? lines.length : Math.min(lines.length, Math.round((jobProgress.progress / 100) * lines.length));
+
+  const [phraseIdx, setPhraseIdx] = useState(0);
+  const [charCount, setCharCount] = useState(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (status !== "running") return;
@@ -119,13 +142,34 @@ export default function AiAnalysisPage() {
   if (!project) return <Navigate to="/app/projects" replace />;
 
   const visibleLines = lines.slice(0, tick);
+  const authRequiredCount = apiEndpoints.filter((e) => e.authRequired).length;
 
   const findings = [
-    { key: "auth", text: "Authentication Found", tone: "success" as const, icon: ShieldCheck, revealAt: 5 },
-    { key: "count", text: `${endpoints.length} Endpoints Mapped`, tone: "info" as const, icon: Layers, revealAt: preamble.length + endpoints.length + 1 },
-    { key: "jwt", text: "JWT Detected", tone: "success" as const, icon: KeyRound, revealAt: preamble.length + endpoints.length + 2 },
-    { key: "rate", text: "Rate Limiting Missing", tone: "warning" as const, icon: TriangleAlert, revealAt: preamble.length + endpoints.length + 6 },
-    { key: "risks", text: `${securityIssues.length} Security Risks Found`, tone: "critical" as const, icon: Bug, revealAt: lines.length - 1 },
+    {
+      key: "count",
+      text: `${apiEndpoints.length} Endpoints Mapped`,
+      tone: "info" as const,
+      icon: Layers,
+      revealAt: preamble.length,
+    },
+    {
+      key: "auth",
+      text: authRequiredCount > 0 ? `${authRequiredCount} Endpoints Require Auth` : "No Auth Requirements Detected",
+      tone: authRequiredCount > 0 ? ("success" as const) : ("warning" as const),
+      icon: KeyRound,
+      revealAt: preamble.length + Math.ceil(apiEndpoints.length / 2),
+    },
+    ...(jobResult
+      ? [
+          {
+            key: "risk",
+            text: jobResult.flagged > 0 ? `AI Flagged ${jobResult.flagged} Endpoints With Risk` : "No Risk Flags Found",
+            tone: jobResult.flagged > 0 ? ("warning" as const) : ("success" as const),
+            icon: jobResult.flagged > 0 ? TriangleAlert : ShieldCheck,
+            revealAt: lines.length - 1,
+          },
+        ]
+      : []),
   ];
 
   const toneClass = {
@@ -144,8 +188,8 @@ export default function AiAnalysisPage() {
         title={status === "complete" ? "Analysis complete" : "AI is analyzing your API"}
         description={
           status === "complete"
-            ? "Every endpoint has been mapped, scored and prepared for testing."
-            : "Sit tight — TestPilot AI is reading your spec and hunting for risk."
+            ? "Every endpoint has been mapped and reviewed for risk."
+            : "Sit tight — TestPilot AI is reviewing your endpoints and hunting for risk."
         }
       />
 
