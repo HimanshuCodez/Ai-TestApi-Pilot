@@ -17,6 +17,7 @@ services:
           property: connectionString
       - key: REDIS_URL
         fromService:
+          type: keyvalue
           name: testpilot-redis
           property: connectionString
       - key: JWT_SECRET
@@ -36,6 +37,9 @@ services:
     name: testpilot-redis
     plan: free
     region: oregon
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: allow all (BullMQ connects over Render's internal network; tighten if you add external Redis clients)
 
 databases:
   - name: testpilot-db
