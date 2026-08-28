@@ -32,7 +32,7 @@ Connect via an **API URL**, an **uploaded OpenAPI file**, or a **public GitHub r
    | `DATABASE_URL` | yes | matches `docker-compose.yml`'s Postgres service by default |
    | `REDIS_URL` | yes | matches `docker-compose.yml`'s Redis service by default |
    | `GEMINI_API_KEY` | yes (for AI-backed features) | AI Analysis/test-generation/failure-analysis jobs fail without it |
-   | `GEMINI_MODEL` | no | defaults to `gemini-2.5-flash` |
+   | `GEMINI_MODEL` | no | defaults to `gemini-3.6-flash` |
    | `JWT_SECRET` | yes | min 16 chars |
    | `JWT_EXPIRES_IN` | no | defaults to `7d` |
    | `PORT` | no | defaults to `4000` |
