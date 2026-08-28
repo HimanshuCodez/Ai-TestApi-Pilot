@@ -29,7 +29,7 @@ services:
       - key: GEMINI_MODEL
         value: gemini-2.5-flash
       - key: CORS_ORIGIN
-        value: https://ai-test-api-pilot.vercel.app/
+        value: https://ai-test-api-pilot.vercel.app
       - key: GITHUB_TOKEN
         sync: false
 
