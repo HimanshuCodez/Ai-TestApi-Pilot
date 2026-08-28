@@ -102,6 +102,7 @@ model Project {
   status         ProjectStatus @default(scanning)
   healthScore    Int           @default(0)
   securityScore  Int           @default(0)
+  tags           String[]      @default([])
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 

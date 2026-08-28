@@ -9,8 +9,8 @@ import type {
   JobRef,
 } from "./types";
 
-export async function createProject(name: string, description: string): Promise<ApiProject> {
-  return apiRequest("/projects", { method: "POST", body: { name, description } });
+export async function createProject(name: string, description: string, tags: string[] = []): Promise<ApiProject> {
+  return apiRequest("/projects", { method: "POST", body: { name, description, tags } });
 }
 
 export async function listProjects(): Promise<ApiProject[]> {

@@ -8,8 +8,8 @@ import { assertSafeUrl } from "../utils/ssrf.js";
 
 export async function createProject(req: Request, res: Response, next: NextFunction) {
   try {
-    const { name, description } = req.body;
-    const project = await projectService.createProject(req.userId!, name, description);
+    const { name, description, tags } = req.body;
+    const project = await projectService.createProject(req.userId!, name, description, tags);
     res.status(201).json(project);
   } catch (err) {
     next(err);

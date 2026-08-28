@@ -13,6 +13,11 @@ export interface ApiProject {
   status: ApiProjectStatus;
   healthScore: number;
   securityScore: number;
+  endpointCount: number;
+  testsGenerated: number;
+  tags: string[];
+  runsToday: number;
+  passRate: number;
   createdAt: string;
   updatedAt: string;
 }

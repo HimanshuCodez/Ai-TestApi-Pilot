@@ -22,7 +22,7 @@ interface ProjectsState {
   upsertProject: (apiProject: ApiProject) => void;
 }
 
-function toFrontendProject(p: ApiProject, existing?: Project): Project {
+function toFrontendProject(p: ApiProject): Project {
   return {
     id: p.id,
     name: p.name,
@@ -31,13 +31,13 @@ function toFrontendProject(p: ApiProject, existing?: Project): Project {
     status: p.status as ProjectStatus,
     healthScore: p.healthScore,
     securityScore: p.securityScore,
-    endpointCount: existing?.endpointCount ?? 0,
-    testsGenerated: existing?.testsGenerated ?? 0,
+    endpointCount: p.endpointCount,
+    testsGenerated: p.testsGenerated,
     lastScanAt: p.updatedAt,
     createdAt: p.createdAt,
-    tags: existing?.tags ?? [],
-    runsToday: existing?.runsToday ?? 0,
-    passRate: existing?.passRate ?? 0,
+    tags: p.tags,
+    runsToday: p.runsToday,
+    passRate: p.passRate,
   };
 }
 
@@ -50,18 +50,14 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
     set({ isLoading: true });
     try {
       const apiProjects = await projectsApi.listProjects();
-      set((s) => ({
-        projects: apiProjects.map((p) => toFrontendProject(p, s.projects.find((existing) => existing.id === p.id))),
-        hasLoaded: true,
-        isLoading: false,
-      }));
+      set({ projects: apiProjects.map(toFrontendProject), hasLoaded: true, isLoading: false });
     } catch {
       set({ isLoading: false, hasLoaded: true });
     }
   },
 
-  addProject: async ({ name, description }) => {
-    const apiProject = await projectsApi.createProject(name, description);
+  addProject: async ({ name, description, environment }) => {
+    const apiProject = await projectsApi.createProject(name, description, [environment]);
     const project = toFrontendProject(apiProject);
     set((s) => ({ projects: [project, ...s.projects] }));
     return project;
@@ -77,7 +73,7 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
   upsertProject: (apiProject) =>
     set((s) => {
       const existing = s.projects.find((p) => p.id === apiProject.id);
-      const project = toFrontendProject(apiProject, existing);
+      const project = toFrontendProject(apiProject);
       return {
         projects: existing ? s.projects.map((p) => (p.id === project.id ? project : p)) : [project, ...s.projects],
       };

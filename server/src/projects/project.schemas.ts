@@ -3,6 +3,7 @@ import { z } from "zod";
 export const createProjectSchema = z.object({
   name: z.string().trim().min(1, "Project name is required.").max(160),
   description: z.string().trim().max(2000).optional().default(""),
+  tags: z.array(z.string().trim().min(1).max(40)).max(10).optional().default([]),
 });
 
 export const connectUrlSchema = z.object({
