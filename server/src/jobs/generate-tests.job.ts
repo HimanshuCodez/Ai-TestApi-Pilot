@@ -3,6 +3,7 @@ import { redisConnection } from "../queue/connection.js";
 import { QUEUE_NAMES } from "../queue/queues.js";
 import { completeJob, failJob, updateJobProgress } from "../queue/job.service.js";
 import { generateTestsForProject } from "../tests/test-generator.js";
+import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 
 interface GenerateTestsJobData {
@@ -25,12 +26,16 @@ export const generateTestsWorker = new Worker<GenerateTestsJobData>(
 
       await completeJob(jobId, JSON.stringify(result));
     } catch (err) {
+      const friendly =
+        err instanceof AppError
+          ? err.message
+          : "TestPilot couldn't generate tests for this project. Please try again.";
       logger.error("generate-tests job failed", {
         jobId,
         projectId,
         message: err instanceof Error ? err.message : String(err),
       });
-      await failJob(jobId, "TestPilot couldn't generate tests for this project. Please try again.");
+      await failJob(jobId, friendly);
     }
   },
   { connection: redisConnection, concurrency: 2 }

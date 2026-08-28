@@ -4,6 +4,7 @@ import { aiProvider } from "../ai/index.js";
 import { callAndValidate } from "../ai/validate.js";
 import { testGenerationOutputSchema } from "../ai/schemas.js";
 import { logger } from "../utils/logger.js";
+import { AppError } from "../utils/errors.js";
 
 const CONCURRENCY = 3;
 
@@ -30,6 +31,7 @@ export async function generateTestsForProject(
   const limit = pLimit(CONCURRENCY);
   let processed = 0;
   let generated = 0;
+  let failures = 0;
 
   await Promise.all(
     endpoints.map((endpoint) =>
@@ -76,6 +78,7 @@ export async function generateTestsForProject(
 
           generated += output.tests.length;
         } catch (err) {
+          failures += 1;
           logger.warn("Skipping test generation after repeated failure", {
             endpointId: endpoint.id,
             message: err instanceof Error ? err.message : String(err),
@@ -87,6 +90,14 @@ export async function generateTestsForProject(
       })
     )
   );
+
+  if (generated === 0 && failures > 0) {
+    throw new AppError(
+      "TestPilot's AI couldn't generate any tests for this project. This usually means the AI provider is unreachable or misconfigured — please try again shortly.",
+      502,
+      "AI_GENERATION_FAILED"
+    );
+  }
 
   return { endpointsProcessed: processed, testsGenerated: generated };
 }
