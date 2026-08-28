@@ -193,3 +193,21 @@ export async function connectFile(req: Request, res: Response, next: NextFunctio
     next(err);
   }
 }
+
+export async function connectGithub(req: Request, res: Response, next: NextFunction) {
+  try {
+    const project = await projectService.getOwnedProject(req.userId!, req.params.id);
+    const { repoUrl } = req.body;
+
+    const job = await createJob(project.id, "analyze_url");
+    await analyzeUrlQueue.add(
+      "analyze-url",
+      { jobId: job.id, projectId: project.id, source: { kind: "GITHUB", repoUrl } },
+      { jobId: job.id }
+    );
+
+    res.status(202).json({ jobId: job.id });
+  } catch (err) {
+    next(err);
+  }
+}

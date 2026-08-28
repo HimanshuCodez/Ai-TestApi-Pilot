@@ -33,6 +33,10 @@ export async function connectFile(projectId: string, fileName: string, content: 
   return apiRequest(`/projects/${projectId}/connect/file`, { method: "POST", body: { fileName, content } });
 }
 
+export async function connectGithub(projectId: string, repoUrl: string): Promise<JobRef> {
+  return apiRequest(`/projects/${projectId}/connect/github`, { method: "POST", body: { repoUrl } });
+}
+
 export async function analyzeEndpoints(projectId: string): Promise<JobRef> {
   return apiRequest(`/projects/${projectId}/analyze-endpoints`, { method: "POST" });
 }

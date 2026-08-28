@@ -2,7 +2,7 @@
 
 Node.js/Express/TypeScript backend for TestPilot AI. Given an API's OpenAPI spec (by URL or file upload), it discovers the API's endpoints, uses an LLM (Gemini) to design test cases, executes those tests as real HTTP requests against the target `baseUrl`, and produces a deterministic health/security/coverage/performance report with AI-written failure explanations.
 
-Phase 1 scope: connect via **API URL or OpenAPI file**. Connecting via a **GitHub repository** is a Phase 2 stub — there is no `connect/github` route yet.
+Connect via an **API URL**, an **uploaded OpenAPI file**, or a **public GitHub repository** (`connect/github` looks for a checked-in spec first, then falls back to a regex-based scan of Express/Fastify/NestJS/Flask/FastAPI/Django route definitions).
 
 ## Stack
 
@@ -37,7 +37,7 @@ Phase 1 scope: connect via **API URL or OpenAPI file**. Connecting via a **GitHu
    | `JWT_EXPIRES_IN` | no | defaults to `7d` |
    | `PORT` | no | defaults to `4000` |
    | `CORS_ORIGIN` | no | defaults to `http://localhost:5173` (the Vite dev server) |
-   | `GITHUB_TOKEN` | no | unused until Phase 2 |
+   | `GITHUB_TOKEN` | no | raises GitHub API rate limits for `connect/github`; unauthenticated requests work but limit to 60 req/hr |
 
 3. Install dependencies and run migrations:
 
@@ -145,6 +145,12 @@ Response `202`: `{ "jobId": "..." }`
 Request: `{ "fileName": "openapi.yaml", "content": "<raw file text>" }`
 Response `202`: `{ "jobId": "..." }`
 
+#### `POST /api/projects/:id/connect/github`
+Request: `{ "repoUrl": "https://github.com/owner/repo" }` — public repositories only.
+Response `202`: `{ "jobId": "..." }`
+
+Searches the repo tree for a checked-in `openapi`/`swagger` spec file first (any path) and parses it exactly like the URL/file flow. If none is found, falls back to a best-effort regex scan of Express/Fastify/NestJS (`.js`/`.ts`) and Flask/FastAPI/Django (`.py`) source files for route definitions — endpoints found this way have `source: "github"`, no request/response schemas, and `authRequired` set from a keyword heuristic only. `Project.baseUrl` is left unset in the scan fallback (there's no way to infer it statically) — set it manually before running tests.
+
 Job `resultRef` (on completion) is a JSON string: `{ "endpointCount": number, "authSchemeCount": number, "specVersion": string, "baseUrl": string }`.
 
 ---
@@ -225,7 +231,7 @@ or `{"type":"failed", "error": "..."}`. Sends a `: heartbeat` comment every 15s 
 
 | Job type | Stages |
 |---|---|
-| `analyze_url` | `CONNECTING → FETCHING_SPEC → PARSING_API → DISCOVERING_ENDPOINTS → ANALYZING_AUTH → COMPLETED` |
+| `analyze_url` | URL: `CONNECTING → FETCHING_SPEC → PARSING_API → DISCOVERING_ENDPOINTS → ANALYZING_AUTH → COMPLETED`; file: `PARSING_API → DISCOVERING_ENDPOINTS → ANALYZING_AUTH → COMPLETED`; GitHub: `CONNECTING → SCANNING_REPOSITORY → PARSING_API → DISCOVERING_ENDPOINTS → ANALYZING_AUTH → COMPLETED` |
 | `analyze_endpoints` | `ANALYZING_ENDPOINTS → COMPLETED` |
 | `generate_tests` | `GENERATING_TESTS → COMPLETED` |
 | `run_tests` | `RUNNING_TESTS → ANALYZING_FAILURES → GENERATING_REPORT → COMPLETED` |

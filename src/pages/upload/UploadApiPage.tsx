@@ -22,7 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { useProjectsStore } from "@/store/useProjectsStore";
 import { useWorkflowStore } from "@/store/useWorkflowStore";
 import { useJobProgress } from "@/hooks/useJobProgress";
-import { connectFile, connectUrl } from "@/services/api/projects";
+import { connectFile, connectGithub, connectUrl } from "@/services/api/projects";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -70,6 +70,7 @@ export default function UploadApiPage() {
   const [fileMeta, setFileMeta] = useState("");
   const [urlMode, setUrlMode] = useState(false);
   const [urlValue, setUrlValue] = useState("");
+  const [githubUrlValue, setGithubUrlValue] = useState("");
   const [showReplace, setShowReplace] = useState(!workflow.uploaded);
   const [summary, setSummary] = useState<DiscoverySummary | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -150,6 +151,30 @@ export default function UploadApiPage() {
     }
   }
 
+  async function handleGithubSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!githubUrlValue.trim()) return;
+    let repoName = "repository";
+    try {
+      const parts = new URL(githubUrlValue).pathname.split("/").filter(Boolean);
+      if (parts.length >= 2) repoName = `${parts[0]}/${parts[1]}`;
+    } catch {
+      /* ignore — backend will validate and return a friendly error */
+    }
+    setFileName(repoName);
+    setFileMeta("Scanned from GitHub");
+    setStatus("processing");
+
+    try {
+      const { jobId: newJobId } = await connectGithub(projectId, githubUrlValue.trim());
+      setJobId(newJobId);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Couldn't scan that repository. Please try again.";
+      toast.error("Connection failed", { description: message });
+      setStatus("idle");
+    }
+  }
+
   const stageIndex = Math.min(stages.length - 1, Math.floor((jobProgress.progress / 100) * stages.length));
 
   const showDropzone = status === "idle" && showReplace;
@@ -188,19 +213,36 @@ export default function UploadApiPage() {
 
       <AnimatePresence mode="wait">
         {showDropzone && tab === "github" && (
-          <motion.div key="github" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <Card className="mx-auto max-w-xl items-center gap-4 px-8 py-16 text-center">
+          <motion.div
+            key="github"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="space-y-5"
+          >
+            <Card className="mx-auto max-w-xl items-center gap-5 px-8 py-14 text-center">
               <div className="flex size-16 items-center justify-center rounded-2xl bg-white/[0.04] text-muted-foreground">
                 <GitBranch className="size-7" />
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-foreground">GitHub connect is coming soon</h3>
+                <h3 className="text-lg font-semibold text-foreground">Connect a GitHub repository</h3>
                 <p className="mt-1.5 max-w-sm text-sm text-muted-foreground">
-                  TestPilot AI will soon be able to scan a repository's routes directly — no spec file required. For
-                  now, use a Swagger/OpenAPI URL or file.
+                  TestPilot looks for a checked-in OpenAPI/Swagger spec first. If it can&apos;t find one, it scans the
+                  repo's source for Express, Fastify, NestJS, Flask, FastAPI, and Django routes instead.
                 </p>
               </div>
-              <Badge variant="outline">Coming soon</Badge>
+              <form onSubmit={handleGithubSubmit} className="flex w-full max-w-md items-center gap-2">
+                <Input
+                  value={githubUrlValue}
+                  onChange={(e) => setGithubUrlValue(e.target.value)}
+                  placeholder="https://github.com/owner/repo"
+                  className="flex-1"
+                />
+                <Button type="submit" disabled={!githubUrlValue.trim()}>
+                  Scan
+                </Button>
+              </form>
+              <Badge variant="outline">Public repositories only</Badge>
             </Card>
           </motion.div>
         )}

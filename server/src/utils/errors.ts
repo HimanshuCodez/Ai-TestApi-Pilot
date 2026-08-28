@@ -68,7 +68,7 @@ export function toFriendlyConnectError(err: unknown): AppError {
   }
   if (message.startsWith("NOT_OPENAPI")) {
     return new AppError(
-      "That URL didn't return a recognizable OpenAPI or Swagger document.",
+      "TestPilot couldn't find a recognizable OpenAPI/Swagger document there, and — for a GitHub repo — no detectable API routes either.",
       422,
       "NOT_OPENAPI"
     );
@@ -99,6 +99,20 @@ export function toFriendlyConnectError(err: unknown): AppError {
   }
   if (message.startsWith("INVALID_URL")) {
     return new AppError("That doesn't look like a valid URL.", 400, "INVALID_URL");
+  }
+  if (message.startsWith("REPO_NOT_FOUND")) {
+    return new AppError(
+      "That GitHub repository couldn't be found. TestPilot only supports public repositories.",
+      404,
+      "REPO_NOT_FOUND"
+    );
+  }
+  if (message.startsWith("RATE_LIMITED")) {
+    return new AppError(
+      "GitHub's API rate limit was hit while scanning this repository. Try again in a few minutes.",
+      429,
+      "RATE_LIMITED"
+    );
   }
 
   return new AppError("TestPilot couldn't analyze this API. Please try again.", 502, "UPSTREAM_ERROR");

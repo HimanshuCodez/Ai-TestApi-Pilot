@@ -4,6 +4,7 @@ import { validateBody } from "../middleware/validate.middleware.js";
 import { connectLimiter } from "../middleware/rateLimit.middleware.js";
 import {
   connectFileSchema,
+  connectGithubSchema,
   connectUrlSchema,
   createProjectSchema,
   generateTestsSchema,
@@ -12,6 +13,7 @@ import {
 import {
   analyzeEndpoints,
   connectFile,
+  connectGithub,
   connectUrl,
   createProject,
   generateTests,
@@ -35,6 +37,7 @@ projectsRouter.get("/:id", getProject);
 projectsRouter.get("/:id/endpoints", listEndpoints);
 projectsRouter.post("/:id/connect/url", connectLimiter, validateBody(connectUrlSchema), connectUrl);
 projectsRouter.post("/:id/connect/file", connectLimiter, validateBody(connectFileSchema), connectFile);
+projectsRouter.post("/:id/connect/github", connectLimiter, validateBody(connectGithubSchema), connectGithub);
 projectsRouter.post("/:id/analyze-endpoints", connectLimiter, analyzeEndpoints);
 projectsRouter.post("/:id/generate-tests", connectLimiter, validateBody(generateTestsSchema), generateTests);
 projectsRouter.get("/:id/tests", listTests);

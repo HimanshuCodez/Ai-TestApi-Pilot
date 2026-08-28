@@ -14,6 +14,17 @@ export const connectFileSchema = z.object({
   content: z.string().min(1, "The uploaded file is empty."),
 });
 
+export const connectGithubSchema = z.object({
+  repoUrl: z
+    .string()
+    .trim()
+    .min(1, "A repository URL is required.")
+    .url("Enter a valid URL.")
+    .refine((url) => new URL(url).hostname.toLowerCase() === "github.com", {
+      message: "Enter a github.com repository URL.",
+    }),
+});
+
 export const generateTestsSchema = z.object({
   endpointIds: z.array(z.string()).optional(),
 });
