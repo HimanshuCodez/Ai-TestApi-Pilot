@@ -37,6 +37,10 @@ export async function connectGithub(projectId: string, repoUrl: string): Promise
   return apiRequest(`/projects/${projectId}/connect/github`, { method: "POST", body: { repoUrl } });
 }
 
+export async function updateBaseUrl(projectId: string, baseUrl: string): Promise<ApiProject> {
+  return apiRequest(`/projects/${projectId}/base-url`, { method: "PATCH", body: { baseUrl } });
+}
+
 export async function analyzeEndpoints(projectId: string): Promise<JobRef> {
   return apiRequest(`/projects/${projectId}/analyze-endpoints`, { method: "POST" });
 }

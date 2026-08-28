@@ -22,7 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { useProjectsStore } from "@/store/useProjectsStore";
 import { useWorkflowStore } from "@/store/useWorkflowStore";
 import { useJobProgress } from "@/hooks/useJobProgress";
-import { connectFile, connectGithub, connectUrl } from "@/services/api/projects";
+import { connectFile, connectGithub, connectUrl, updateBaseUrl } from "@/services/api/projects";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -73,6 +73,8 @@ export default function UploadApiPage() {
   const [githubUrlValue, setGithubUrlValue] = useState("");
   const [showReplace, setShowReplace] = useState(!workflow.uploaded);
   const [summary, setSummary] = useState<DiscoverySummary | null>(null);
+  const [baseUrlInput, setBaseUrlInput] = useState("");
+  const [savingBaseUrl, setSavingBaseUrl] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const jobProgress = useJobProgress(jobId, (finalState) => {
@@ -172,6 +174,22 @@ export default function UploadApiPage() {
       const message = err instanceof ApiError ? err.message : "Couldn't scan that repository. Please try again.";
       toast.error("Connection failed", { description: message });
       setStatus("idle");
+    }
+  }
+
+  async function handleBaseUrlSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!baseUrlInput.trim()) return;
+    setSavingBaseUrl(true);
+    try {
+      await updateBaseUrl(projectId, baseUrlInput.trim());
+      updateProject(projectId, { baseUrl: baseUrlInput.trim() });
+      toast.success("Base URL saved");
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Couldn't save that base URL. Please try again.";
+      toast.error("Save failed", { description: message });
+    } finally {
+      setSavingBaseUrl(false);
     }
   }
 
@@ -436,6 +454,25 @@ export default function UploadApiPage() {
                   <p className="text-xs text-muted-foreground">Auth schemes</p>
                 </div>
               </div>
+              {!project.baseUrl && (
+                <div className="mx-auto w-full max-w-sm space-y-2 rounded-xl border border-warning/30 bg-warning/6 p-4 text-left">
+                  <p className="text-xs font-medium text-warning">
+                    No base URL detected{tab === "github" ? " from this repository scan" : ""}. Set where your API
+                    actually runs so TestPilot can execute tests against it.
+                  </p>
+                  <form onSubmit={handleBaseUrlSubmit} className="flex items-center gap-2">
+                    <Input
+                      value={baseUrlInput}
+                      onChange={(e) => setBaseUrlInput(e.target.value)}
+                      placeholder="https://api.example.com"
+                      className="flex-1"
+                    />
+                    <Button type="submit" size="sm" disabled={!baseUrlInput.trim() || savingBaseUrl}>
+                      {savingBaseUrl ? <Loader2 className="size-4 animate-spin" /> : "Save"}
+                    </Button>
+                  </form>
+                </div>
+              )}
               <div className="flex flex-col gap-2.5 sm:flex-row">
                 <Button
                   variant="outline"

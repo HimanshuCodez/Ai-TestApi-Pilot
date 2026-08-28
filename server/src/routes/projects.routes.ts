@@ -9,6 +9,7 @@ import {
   createProjectSchema,
   generateTestsSchema,
   runTestsSchema,
+  updateBaseUrlSchema,
 } from "../projects/project.schemas.js";
 import {
   analyzeEndpoints,
@@ -25,6 +26,7 @@ import {
   listProjects,
   listTests,
   runTests,
+  updateBaseUrl,
 } from "../controllers/projects.controller.js";
 
 export const projectsRouter = Router();
@@ -35,6 +37,7 @@ projectsRouter.post("/", validateBody(createProjectSchema), createProject);
 projectsRouter.get("/", listProjects);
 projectsRouter.get("/:id", getProject);
 projectsRouter.get("/:id/endpoints", listEndpoints);
+projectsRouter.patch("/:id/base-url", validateBody(updateBaseUrlSchema), updateBaseUrl);
 projectsRouter.post("/:id/connect/url", connectLimiter, validateBody(connectUrlSchema), connectUrl);
 projectsRouter.post("/:id/connect/file", connectLimiter, validateBody(connectFileSchema), connectFile);
 projectsRouter.post("/:id/connect/github", connectLimiter, validateBody(connectGithubSchema), connectGithub);

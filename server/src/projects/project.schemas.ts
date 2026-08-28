@@ -25,6 +25,10 @@ export const connectGithubSchema = z.object({
     }),
 });
 
+export const updateBaseUrlSchema = z.object({
+  baseUrl: z.string().trim().min(1, "A base URL is required.").url("Enter a valid URL."),
+});
+
 export const generateTestsSchema = z.object({
   endpointIds: z.array(z.string()).optional(),
 });

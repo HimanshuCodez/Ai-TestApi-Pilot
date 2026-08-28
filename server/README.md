@@ -153,6 +153,10 @@ Searches the repo tree for a checked-in `openapi`/`swagger` spec file first (any
 
 Job `resultRef` (on completion) is a JSON string: `{ "endpointCount": number, "authSchemeCount": number, "specVersion": string, "baseUrl": string }`.
 
+#### `PATCH /api/projects/:id/base-url`
+Request: `{ "baseUrl": "https://api.example.com" }`
+Response `200`: the updated `Project`. Runs the same SSRF guard as spec fetching — private/internal/loopback targets are rejected. Needed after a GitHub route-scan connect, which can't infer a `baseUrl` on its own.
+
 ---
 
 ### AI Analysis

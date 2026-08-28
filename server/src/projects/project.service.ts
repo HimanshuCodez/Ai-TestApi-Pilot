@@ -19,3 +19,7 @@ export async function getOwnedProject(userId: string, projectId: string) {
 export async function listEndpoints(projectId: string) {
   return prisma.endpoint.findMany({ where: { projectId }, orderBy: [{ tag: "asc" }, { path: "asc" }] });
 }
+
+export async function updateBaseUrl(projectId: string, baseUrl: string) {
+  return prisma.project.update({ where: { id: projectId }, data: { baseUrl } });
+}

@@ -125,6 +125,21 @@ export default function RunTestsPage() {
     );
   }
 
+  if (!project.baseUrl) {
+    return (
+      <div className="space-y-8">
+        <PageHeader eyebrow={project.name} title="Run Tests" description="Execute your AI-generated suite in real time." />
+        <EmptyState
+          icon={TerminalSquare}
+          title="Set a base URL first"
+          description="TestPilot doesn't know where your API actually runs yet, so it can't send any requests to it."
+          actionLabel="Set Base URL"
+          onAction={() => navigate(`/app/projects/${projectId}/upload`)}
+        />
+      </div>
+    );
+  }
+
   async function startRun() {
     setPhase("running");
     try {

@@ -3,7 +3,8 @@ import * as projectService from "../projects/project.service.js";
 import { createJob } from "../queue/job.service.js";
 import { prisma } from "../db.js";
 import { analyzeEndpointsQueue, analyzeUrlQueue, generateTestsQueue, runTestsQueue } from "../queue/queues.js";
-import { NotFoundError } from "../utils/errors.js";
+import { NotFoundError, toFriendlyConnectError } from "../utils/errors.js";
+import { assertSafeUrl } from "../utils/ssrf.js";
 
 export async function createProject(req: Request, res: Response, next: NextFunction) {
   try {
@@ -28,6 +29,24 @@ export async function getProject(req: Request, res: Response, next: NextFunction
   try {
     const project = await projectService.getOwnedProject(req.userId!, req.params.id);
     res.json(project);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function updateBaseUrl(req: Request, res: Response, next: NextFunction) {
+  try {
+    const project = await projectService.getOwnedProject(req.userId!, req.params.id);
+    const { baseUrl } = req.body;
+
+    try {
+      await assertSafeUrl(baseUrl);
+    } catch (err) {
+      throw toFriendlyConnectError(err);
+    }
+
+    const updated = await projectService.updateBaseUrl(project.id, baseUrl);
+    res.json(updated);
   } catch (err) {
     next(err);
   }
