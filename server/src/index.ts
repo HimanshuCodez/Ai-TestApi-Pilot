@@ -13,7 +13,7 @@ import { runTestsWorker } from "./jobs/run-tests.job.js";
 // entrypoint later without touching route code if scaling demands it.
 const workers = [analyzeUrlWorker, analyzeEndpointsWorker, generateTestsWorker, runTestsWorker];
 
-const server = app.listen(env.PORT, () => {
+const server = app.listen(env.PORT, "0.0.0.0", () => {
   logger.info(`TestPilot API listening on port ${env.PORT}`);
 });
 
