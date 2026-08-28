@@ -280,7 +280,7 @@ export default function UploadApiPage() {
               }}
               onClick={() => inputRef.current?.click()}
               className={cn(
-                "group relative flex min-h-[360px] cursor-pointer flex-col items-center justify-center overflow-hidden rounded-3xl border-2 border-dashed p-10 text-center transition-all duration-300",
+                "group relative flex min-h-[260px] cursor-pointer flex-col items-center justify-center overflow-hidden rounded-3xl border-2 border-dashed p-6 text-center transition-all duration-300 sm:min-h-[360px] sm:p-10",
                 isDragging
                   ? "border-primary/60 bg-primary/[0.06] shadow-[0_0_0_1px_rgba(109,94,248,0.3),0_40px_80px_-30px_rgba(109,94,248,0.5)]"
                   : "border-white/[0.12] bg-white/[0.015] hover:border-white/25 hover:bg-white/[0.03]"

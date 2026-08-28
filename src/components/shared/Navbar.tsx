@@ -25,7 +25,7 @@ const notifIcon = {
 } as const;
 
 export function Navbar() {
-  const { toggleSidebar, setCommandPaletteOpen } = useUIStore();
+  const { toggleMobileSidebar, setCommandPaletteOpen } = useUIStore();
   const { user, logout } = useAuthStore();
   const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
@@ -37,7 +37,7 @@ export function Navbar() {
 
   return (
     <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center gap-3 border-b border-white/[0.06] bg-[#050509]/70 px-4 backdrop-blur-xl sm:px-6">
-      <Button variant="ghost" size="icon-sm" className="lg:hidden" onClick={toggleSidebar}>
+      <Button variant="ghost" size="icon-sm" className="lg:hidden" onClick={toggleMobileSidebar} aria-label="Toggle menu">
         <Menu className="size-4.5" />
       </Button>
 

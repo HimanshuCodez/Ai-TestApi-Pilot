@@ -254,8 +254,8 @@ export default function ApiExplorerPage() {
 
 function ParamTable({ rows }: { rows: { name: string; type: string; required: boolean; in: string; description: string; example?: string }[] }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-white/[0.06]">
-      <table className="w-full text-sm">
+    <div className="overflow-x-auto rounded-xl border border-white/[0.06]">
+      <table className="w-full min-w-[560px] text-sm">
         <thead>
           <tr className="border-b border-white/[0.06] bg-white/[0.02] text-left text-xs text-muted-foreground">
             <th className="px-4 py-2.5 font-medium">Name</th>

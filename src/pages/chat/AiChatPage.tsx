@@ -133,7 +133,7 @@ export default function AiChatPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] flex-col space-y-6">
+    <div className="flex h-[calc(100svh-7rem)] flex-col space-y-6">
       <PageHeader eyebrow="AI Chat" title="Ask TestPilot AI" description="Real-time answers about your APIs, risks, and fixes." />
 
       <Card className="flex flex-1 flex-col gap-0 overflow-hidden py-0">

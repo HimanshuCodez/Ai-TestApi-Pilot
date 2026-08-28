@@ -39,7 +39,7 @@ function projectNav(id: string) {
 
 export function Sidebar() {
   const location = useLocation();
-  const { sidebarCollapsed, toggleSidebar } = useUIStore();
+  const { sidebarCollapsed, toggleSidebar, mobileSidebarOpen, closeMobileSidebar } = useUIStore();
   const projects = useProjectsStore((s) => s.projects);
   const match = location.pathname.match(/^\/app\/projects\/([^/]+)/);
   const projectId = match?.[1];
@@ -49,13 +49,28 @@ export function Sidebar() {
     end ? location.pathname === to : location.pathname.startsWith(to);
 
   return (
-    <motion.aside
-      animate={{ width: sidebarCollapsed ? 76 : 260 }}
-      transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-      className="relative z-30 flex h-svh shrink-0 flex-col border-r border-white/[0.06] bg-[#08080f]/80 backdrop-blur-xl"
-    >
+    <>
+      <AnimatePresence>
+        {mobileSidebarOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={closeMobileSidebar}
+            className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm lg:hidden"
+          />
+        )}
+      </AnimatePresence>
+      <motion.aside
+        animate={{ width: sidebarCollapsed ? 76 : 260 }}
+        transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+        className={cn(
+          "fixed inset-y-0 left-0 z-50 flex h-svh w-[260px] shrink-0 flex-col border-r border-white/[0.06] bg-[#08080f] backdrop-blur-xl transition-transform duration-300 ease-out lg:sticky lg:top-0 lg:z-30 lg:w-auto lg:translate-x-0 lg:bg-[#08080f]/80",
+          mobileSidebarOpen ? "translate-x-0" : "-translate-x-full"
+        )}
+      >
       <div className="flex h-16 items-center gap-2.5 border-b border-white/[0.06] px-4">
-        <Link to="/" className="flex shrink-0 items-center gap-2.5">
+        <Link to="/" onClick={closeMobileSidebar} className="flex shrink-0 items-center gap-2.5">
           <div className="flex size-8 items-center justify-center rounded-lg bg-gradient-to-br from-[#6D5EF8] to-[#00E5FF] shadow-[0_0_20px_rgba(109,94,248,0.5)]">
             <svg viewBox="0 0 24 24" className="size-4.5 text-white" fill="none">
               <path d="M6 12.5L10 16.5L18 7.5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -82,6 +97,7 @@ export function Sidebar() {
             {!sidebarCollapsed && (
               <Link
                 to="/app/dashboard"
+                onClick={closeMobileSidebar}
                 className="mb-3 flex items-center gap-1.5 px-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
               >
                 <ArrowLeft className="size-3.5" /> All projects
@@ -110,7 +126,7 @@ export function Sidebar() {
         ))}
       </nav>
 
-      <div className="border-t border-white/[0.06] p-3">
+      <div className="hidden border-t border-white/[0.06] p-3 lg:block">
         <button
           onClick={toggleSidebar}
           className="flex w-full items-center justify-center gap-2 rounded-lg py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
@@ -119,7 +135,8 @@ export function Sidebar() {
           {!sidebarCollapsed && "Collapse"}
         </button>
       </div>
-    </motion.aside>
+      </motion.aside>
+    </>
   );
 }
 
@@ -136,9 +153,12 @@ function NavItem({
   active: boolean;
   collapsed: boolean;
 }) {
+  const closeMobileSidebar = useUIStore((s) => s.closeMobileSidebar);
+
   const content = (
     <Link
       to={to}
+      onClick={closeMobileSidebar}
       className={cn(
         "group relative flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-all",
         collapsed && "justify-center",

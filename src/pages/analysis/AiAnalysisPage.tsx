@@ -201,7 +201,7 @@ export default function AiAnalysisPage() {
             <span className="size-2.5 rounded-full bg-success/70" />
             <span className="ml-2 font-mono text-[11px] text-muted-foreground">analysis.log</span>
           </div>
-          <div ref={scrollRef} className="scrollbar-none h-[420px] overflow-y-auto px-5 py-4 font-mono text-[12.5px] leading-relaxed">
+          <div ref={scrollRef} className="scrollbar-none h-[280px] overflow-y-auto px-5 py-4 font-mono text-[12.5px] leading-relaxed sm:h-[420px]">
             {visibleLines.map((line, i) => (
               <motion.div
                 key={i}
@@ -221,7 +221,9 @@ export default function AiAnalysisPage() {
         </Card>
 
         <div className="order-1 flex flex-col items-center justify-center gap-6 py-6 lg:order-2">
-          <AICore active={status === "running"} />
+          <div className="scale-75 sm:scale-100">
+            <AICore active={status === "running"} />
+          </div>
           <div className="h-10 text-center">
             {status === "running" ? (
               <p className="font-mono text-xs text-primary/90">

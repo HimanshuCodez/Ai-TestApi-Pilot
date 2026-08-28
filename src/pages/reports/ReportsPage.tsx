@@ -211,7 +211,7 @@ export default function ReportsPage() {
       </div>
 
       <ChartCard title="Response Time" description="Latency across this run's requests (ms)" delay={0.1}>
-        <div className="grid grid-cols-3 gap-4 px-1">
+        <div className="grid grid-cols-1 gap-4 px-1 xs:grid-cols-3">
           <LatencyStat label="Average" value={report.metrics.avgDurationMs} />
           <LatencyStat label="p50" value={report.metrics.p50DurationMs} />
           <LatencyStat label="p95" value={report.metrics.p95DurationMs} />

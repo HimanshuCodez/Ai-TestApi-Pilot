@@ -7,16 +7,22 @@ import { Navbar } from "@/components/shared/Navbar";
 import { CommandPalette } from "@/components/shared/CommandPalette";
 import { useAuthStore } from "@/store/useAuthStore";
 import { useProjectsSync } from "@/hooks/useProjectsSync";
+import { useUIStore } from "@/store/useUIStore";
 
 export function AppLayout() {
   const location = useLocation();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const isHydrating = useAuthStore((s) => s.isHydrating);
   const hydrate = useAuthStore((s) => s.hydrate);
+  const closeMobileSidebar = useUIStore((s) => s.closeMobileSidebar);
 
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
+
+  useEffect(() => {
+    closeMobileSidebar();
+  }, [location.pathname, closeMobileSidebar]);
 
   useProjectsSync(isAuthenticated);
 
