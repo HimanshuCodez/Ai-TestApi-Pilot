@@ -20,6 +20,7 @@ interface ProjectsState {
   getProject: (id: string) => Project | undefined;
   updateProject: (id: string, patch: Partial<Project>) => void;
   upsertProject: (apiProject: ApiProject) => void;
+  reset: () => void;
 }
 
 function toFrontendProject(p: ApiProject): Project {
@@ -78,4 +79,6 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
         projects: existing ? s.projects.map((p) => (p.id === project.id ? project : p)) : [project, ...s.projects],
       };
     }),
+
+  reset: () => set({ projects: [], hasLoaded: false, isLoading: false }),
 }));

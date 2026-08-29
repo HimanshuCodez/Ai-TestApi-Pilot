@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { fetchMe, loginRequest, registerRequest, type ApiUser } from "@/services/api/auth";
 import { getStoredToken, setStoredToken } from "@/lib/api";
+import { useProjectsStore } from "@/store/useProjectsStore";
 import type { User } from "@/types";
 
 function toDisplayUser(apiUser: ApiUser): User {
@@ -33,17 +34,20 @@ export const useAuthStore = create<AuthState>()(
       isHydrating: true,
 
       login: async (email, password) => {
+        useProjectsStore.getState().reset();
         const result = await loginRequest(email, password);
         set({ user: toDisplayUser(result.user), isAuthenticated: true });
       },
 
       register: async (name, email, password) => {
+        useProjectsStore.getState().reset();
         const result = await registerRequest(name, email, password);
         set({ user: toDisplayUser(result.user), isAuthenticated: true });
       },
 
       logout: () => {
         setStoredToken(null);
+        useProjectsStore.getState().reset();
         set({ user: null, isAuthenticated: false });
       },
 
